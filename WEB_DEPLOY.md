@@ -24,32 +24,27 @@ git remote add origin https://github.com/你的用户名/你的仓库名.git
 git push -u origin main
 ```
 
-## 3. 设置 GitHub Secrets
+## 3. 发布网页
 
-进入 GitHub 仓库：
-
-Settings -> Secrets and variables -> Actions -> New repository secret
-
-添加两个 secret：
-
-- `SUPABASE_URL`
-- `SUPABASE_KEY`
-
-## 4. 开启 GitHub Pages
-
-进入 GitHub 仓库：
+本项目已经把 Flutter Web 成品放在 `docs/` 文件夹。进入 GitHub 仓库：
 
 Settings -> Pages -> Build and deployment -> Source
 
 选择：
 
 ```text
-GitHub Actions
+Deploy from a branch
 ```
 
-## 5. 等待发布完成
+Branch 选择：
 
-推送到 `main` 后，GitHub Actions 会自动构建网页。发布成功后，Pages 页面会显示网址，通常类似：
+```text
+main / docs
+```
+
+## 4. 等待发布完成
+
+推送到 `main` 后，GitHub Pages 会自动发布 `docs/` 里的网页。发布成功后，Pages 页面会显示网址，通常类似：
 
 ```text
 https://你的用户名.github.io/你的仓库名/
