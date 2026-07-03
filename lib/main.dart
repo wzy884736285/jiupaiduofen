@@ -3,8 +3,16 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-const supabaseKey = String.fromEnvironment('SUPABASE_KEY');
+const defaultSupabaseUrl = 'https://bvexhnxklewrqdzbwlcd.supabase.co';
+const defaultSupabaseKey = 'sb_publishable_SE3kLt6gcjYM2rAwxGWcQg_nqX2iwM3';
+const supabaseUrl = String.fromEnvironment(
+  'SUPABASE_URL',
+  defaultValue: defaultSupabaseUrl,
+);
+const supabaseKey = String.fromEnvironment(
+  'SUPABASE_KEY',
+  defaultValue: defaultSupabaseKey,
+);
 const hasSupabaseConfig = supabaseUrl != '' && supabaseKey != '';
 
 Future<void> main() async {
