@@ -905,7 +905,13 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
   void submitSelectedCard() {
     if (!isMyTurn || selectedCard == null) return;
-    send('submit_card', {'id': playerId, 'card': selectedCard});
+
+    final payload = {'id': playerId, 'card': selectedCard};
+    if (isHost) {
+      handleSubmitCard(payload);
+    } else {
+      send('submit_card', payload);
+    }
   }
 
   void finishOnlineRound() {
