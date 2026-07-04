@@ -116,7 +116,7 @@ const skillDefinitions = {
     id: 'last_word',
     name: 'last word',
     description: '并列时优先赢',
-    detail: '只影响自己。本轮如果你和别人并列成为目标数字，优先判定你单独获胜；没有并列时不会改变结果。',
+    detail: '只影响自己。本轮如果你和别人并列成为目标数字，优先判定你单独获胜；如果发动成功，可以再次使用这张技能。',
     icon: Icons.record_voice_over,
   ),
 };
