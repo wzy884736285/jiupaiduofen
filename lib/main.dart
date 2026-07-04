@@ -26,8 +26,7 @@ const skillDeck = [
   'insurance',
   'silence',
   'chaos',
-  'anchor',
-  'loan',
+  'defense',
   'last_word',
 ];
 
@@ -53,7 +52,7 @@ const skillDefinitions = {
     id: 'lock',
     name: 'lock',
     description: '禁别人一个数字',
-    detail: '选择一个还没出牌的对手，并禁止他本轮打出一个指定数字。已经出过牌的人不能被锁，开了 anchor 的人也不能被锁；第9轮不能使用。',
+    detail: '选择一个还没出牌的对手，并禁止他本轮打出一个指定数字。已经出过牌的人不能被锁；第9轮不能使用。',
     icon: Icons.block,
   ),
   'peek': SkillDefinition(
@@ -66,8 +65,9 @@ const skillDefinitions = {
   'ambush': SkillDefinition(
     id: 'ambush',
     name: 'ambush',
-    description: '越早猜中加分越多',
-    detail: '先猜一个 1 到 9 的数字。结算时只要本轮有人出过这个数字，你额外得分：第1轮+9、第2轮+8，之后逐轮递减；第9轮不能使用。',
+    description: '猜中后抢对方分',
+    detail:
+        '选择一个对手并猜他本轮会出的数字。猜中就从他身上抢分，最多抢到他 0 分为止：第1-2轮抢4分，第3-4轮抢3分，第5-6轮抢2分，第7-8轮抢1分，第9轮不能使用。',
     icon: Icons.radar,
   ),
   'mirror': SkillDefinition(
@@ -81,7 +81,8 @@ const skillDefinitions = {
     id: 'tax',
     name: 'tax',
     description: '从赢家拿 2 分',
-    detail: '本轮结算后，如果别人赢了，你从每个赢家那里拿 2 分；如果你自己就是赢家，不会从自己身上拿分。',
+    detail:
+        '本轮结算后，如果别人赢了，你从每个赢家那里拿分；2人局每个赢家拿5分，3人局拿2分，4-5人局拿1分。如果你自己就是赢家，不会从自己身上拿分。',
     icon: Icons.account_balance,
   ),
   'insurance': SkillDefinition(
@@ -95,7 +96,7 @@ const skillDefinitions = {
     id: 'silence',
     name: 'silence',
     description: '禁用别人本轮技能',
-    detail: '选择一个对手，让他本轮不能再使用技能，并让他本轮已经启动的技能效果失效。开了 anchor 的人免疫。',
+    detail: '选择一个对手，让他本轮不能再使用技能，并让他本轮已经启动的技能效果失效。',
     icon: Icons.volume_off,
   ),
   'chaos': SkillDefinition(
@@ -112,20 +113,12 @@ const skillDefinitions = {
     detail: '选择一个对手并猜他本轮会出的数字。结算时如果猜中，你额外 +5 分，不要求你赢本轮。',
     icon: Icons.center_focus_strong,
   ),
-  'anchor': SkillDefinition(
-    id: 'anchor',
-    name: 'anchor',
-    description: '本轮免疫干扰',
-    detail:
-        '只保护自己。本轮免疫 lock 和 silence；如果你已经被 lock 或 silence，使用 anchor 会立刻解除这些干扰。',
-    icon: Icons.anchor,
-  ),
-  'loan': SkillDefinition(
-    id: 'loan',
-    name: 'loan',
-    description: '立刻 +6，之后3轮各扣2',
-    detail: '立刻获得 6 分。之后从下一轮开始，连续 3 轮每轮结算时扣 2 分。欠分还完前不能再次使用 loan。',
-    icon: Icons.payments,
+  'defense': SkillDefinition(
+    id: 'defense',
+    name: 'defense',
+    description: '本轮全部技能失效',
+    detail: '发动后，本轮所有人已经启动的技能效果全部失效，包括自己的；之后本轮也不能再发动技能。每张技能牌一局仍然只能使用一次。',
+    icon: Icons.shield,
   ),
   'last_word': SkillDefinition(
     id: 'last_word',
@@ -162,7 +155,17 @@ bool hasAnySkill(List<String> hand, Set<String> skillIds) {
 }
 
 int ambushBonusForRound(int round) {
-  return max(0, 10 - round);
+  if (round <= 2) return 4;
+  if (round <= 4) return 3;
+  if (round <= 6) return 2;
+  if (round <= 8) return 1;
+  return 0;
+}
+
+int taxAmountForPlayerCount(int count) {
+  if (count <= 2) return 5;
+  if (count == 3) return 2;
+  return 1;
 }
 
 List<int> makeFairTurnOrder({
@@ -303,6 +306,7 @@ class Player {
   bool insuranceActive = false;
   bool anchorActive = false;
   bool lastWordActive = false;
+  int? ambushTargetIndex;
   int? ambushNumber;
   int ambushBonus = 0;
   int? snipeTargetIndex;
@@ -310,6 +314,7 @@ class Player {
   int loanDebtRounds = 0;
   int loanStartRound = 0;
   int lossStreak = 0;
+  int skillRefreshTokens = 0;
 
   bool get shouldAvoidFirst =>
       hasAnySkill(skillHand, skillsThatNeedEarlierPlayers);
@@ -328,6 +333,7 @@ class Player {
     insuranceActive = false;
     anchorActive = false;
     lastWordActive = false;
+    ambushTargetIndex = null;
     ambushNumber = null;
     ambushBonus = 0;
     snipeTargetIndex = null;
@@ -335,6 +341,7 @@ class Player {
     loanDebtRounds = 0;
     loanStartRound = 0;
     lossStreak = 0;
+    skillRefreshTokens = 0;
   }
 }
 
@@ -374,6 +381,7 @@ class _GamePageState extends State<GamePage> {
   int? selectedCard;
   int? lastSingleWinner;
   bool revolutionRound = false;
+  bool defenseRound = false;
   int? revolutionOwner;
   final Map<int, int> currentLocks = {};
   final Map<int, int> currentLockOwners = {};
@@ -431,6 +439,7 @@ class _GamePageState extends State<GamePage> {
       selectedCard = null;
       lastSingleWinner = null;
       revolutionRound = false;
+      defenseRound = false;
       revolutionOwner = null;
       currentLocks.clear();
       currentLockOwners.clear();
@@ -525,6 +534,7 @@ class _GamePageState extends State<GamePage> {
     if (lastWordCandidates.isNotEmpty) {
       winners = [lastWordCandidates.first];
       reason = '$reason；last word：${players[winners.first].name} 并列优先';
+      players[winners.first].usedSkills.remove('last_word');
     } else if (candidates.length == 1) {
       winners = candidates;
     } else if (lastSingleWinner != null &&
@@ -548,9 +558,18 @@ class _GamePageState extends State<GamePage> {
     for (int i = 0; i < players.length; i++) {
       final player = players[i];
       if (player.ambushNumber != null &&
-          currentPlays.values.contains(player.ambushNumber)) {
-        player.score += player.ambushBonus;
-        notes.add('ambush：${player.name} +${player.ambushBonus}');
+          player.ambushTargetIndex != null &&
+          currentPlays[player.ambushTargetIndex] == player.ambushNumber) {
+        final target = players[player.ambushTargetIndex!];
+        final steal = min(
+          player.ambushBonus.toDouble(),
+          max(0.0, target.score),
+        );
+        target.score -= steal;
+        player.score += steal;
+        notes.add(
+          'ambush：${player.name} 从 ${target.name} 抢 ${formatScore(steal)} 分',
+        );
       }
 
       if (player.snipeTargetIndex != null &&
@@ -569,11 +588,14 @@ class _GamePageState extends State<GamePage> {
     for (int i = 0; i < players.length; i++) {
       final player = players[i];
       if (!player.taxActive) continue;
+      final taxAmount = taxAmountForPlayerCount(players.length);
       for (final winner in winners) {
         if (winner == i) continue;
-        players[winner].score -= 2;
-        player.score += 2;
-        notes.add('tax：${player.name} 从 ${players[winner].name} 拿 2 分');
+        players[winner].score -= taxAmount;
+        player.score += taxAmount;
+        notes.add(
+          'tax：${player.name} 从 ${players[winner].name} 拿 $taxAmount 分',
+        );
       }
     }
 
@@ -583,15 +605,14 @@ class _GamePageState extends State<GamePage> {
         players[i].lossStreak = 0;
       } else {
         players[i].lossStreak++;
+        if (players[i].lossStreak % 4 == 0) {
+          players[i].skillRefreshTokens++;
+          notes.add('连输奖励：${players[i].name} 可以恢复 1 张已用技能');
+        }
         if (players[i].lossStreak >= 2) {
           players[i].score += 2;
           compensation.add('${players[i].name} +2');
         }
-      }
-      if (players[i].loanDebtRounds > 0 && players[i].loanStartRound < round) {
-        players[i].score -= 2;
-        players[i].loanDebtRounds--;
-        notes.add('loan：${players[i].name} -2');
       }
       clearLocalRoundSkills(players[i]);
     }
@@ -622,10 +643,33 @@ class _GamePageState extends State<GamePage> {
     player.insuranceActive = false;
     player.anchorActive = false;
     player.lastWordActive = false;
+    player.ambushTargetIndex = null;
     player.ambushNumber = null;
     player.ambushBonus = 0;
     player.snipeTargetIndex = null;
     player.snipeNumber = null;
+  }
+
+  void clearAllLocalSkillEffects() {
+    revolutionRound = false;
+    revolutionOwner = null;
+    currentLocks.clear();
+    currentLockOwners.clear();
+    currentSilenced.clear();
+    currentSilenceOwners.clear();
+    currentChaosDeltas.clear();
+    currentChaosDelta = 0;
+    for (final player in players) {
+      clearLocalRoundSkills(player);
+    }
+  }
+
+  void activateDefense(Player player) {
+    setState(() {
+      markLocalSkillUsed(player, 'defense');
+      clearAllLocalSkillEffects();
+      defenseRound = true;
+    });
   }
 
   void silenceLocalPlayer(int targetIndex) {
@@ -649,14 +693,6 @@ class _GamePageState extends State<GamePage> {
     currentChaosDeltas.remove(targetIndex);
     currentChaosDelta = currentChaosDeltas.length;
 
-    if (target.usedSkills.contains('loan') &&
-        target.loanStartRound == round &&
-        target.loanDebtRounds == 3) {
-      target.score -= 6;
-      target.loanDebtRounds = 0;
-      target.loanStartRound = 0;
-    }
-
     clearLocalRoundSkills(target);
     currentSilenced.add(targetIndex);
     currentSilenceOwners[targetIndex] = currentPlayer;
@@ -668,6 +704,7 @@ class _GamePageState extends State<GamePage> {
       resetLocalTurnOrder();
       selectedCard = null;
       revolutionRound = false;
+      defenseRound = false;
       revolutionOwner = null;
       currentLocks.clear();
       currentLockOwners.clear();
@@ -692,6 +729,7 @@ class _GamePageState extends State<GamePage> {
       selectedCard = null;
       lastSingleWinner = null;
       revolutionRound = false;
+      defenseRound = false;
       revolutionOwner = null;
       currentLocks.clear();
       currentLockOwners.clear();
@@ -714,6 +752,7 @@ class _GamePageState extends State<GamePage> {
       selectedCard = null;
       lastSingleWinner = null;
       revolutionRound = false;
+      defenseRound = false;
       revolutionOwner = null;
       currentLocks.clear();
       currentLockOwners.clear();
@@ -733,7 +772,10 @@ class _GamePageState extends State<GamePage> {
         player.usedSkills.contains(skillId)) {
       return false;
     }
-    if (currentSilenced.contains(currentPlayer) && skillId != 'anchor') {
+    if (defenseRound) {
+      return false;
+    }
+    if (currentSilenced.contains(currentPlayer) && skillId != 'defense') {
       return false;
     }
     return switch (skillId) {
@@ -748,8 +790,7 @@ class _GamePageState extends State<GamePage> {
       'silence' => true,
       'chaos' => true,
       'snipe' => true,
-      'anchor' => !player.anchorActive,
-      'loan' => player.loanDebtRounds == 0,
+      'defense' => true,
       'last_word' => !player.lastWordActive,
       _ => false,
     };
@@ -763,7 +804,7 @@ class _GamePageState extends State<GamePage> {
       'mirror' => player.mirrorActive,
       'tax' => player.taxActive,
       'insurance' => player.insuranceActive,
-      'anchor' => player.anchorActive,
+      'defense' => defenseRound,
       'last_word' => player.lastWordActive,
       'ambush' => player.ambushNumber != null,
       'snipe' => player.snipeNumber != null,
@@ -836,23 +877,8 @@ class _GamePageState extends State<GamePage> {
       case 'snipe':
         await activateSnipe();
         break;
-      case 'anchor':
-        setState(() {
-          markLocalSkillUsed(player, skillId);
-          player.anchorActive = true;
-          currentLocks.remove(currentPlayer);
-          currentLockOwners.remove(currentPlayer);
-          currentSilenced.remove(currentPlayer);
-          currentSilenceOwners.remove(currentPlayer);
-        });
-        break;
-      case 'loan':
-        setState(() {
-          markLocalSkillUsed(player, skillId);
-          player.score += 6;
-          player.loanDebtRounds = 3;
-          player.loanStartRound = round;
-        });
+      case 'defense':
+        activateDefense(player);
         break;
       case 'last_word':
         setState(() {
@@ -863,15 +889,71 @@ class _GamePageState extends State<GamePage> {
     }
   }
 
+  bool canRefreshLocalSkill(Player player) {
+    return player.skillRefreshTokens > 0 &&
+        player.skillHand.any(
+          (skillId) =>
+              player.usedSkills.contains(skillId) &&
+              skillDefinitions.containsKey(skillId),
+        );
+  }
+
+  Future<void> refreshLocalSkill(Player player) async {
+    final choices = [
+      for (final skillId in player.skillHand)
+        if (player.usedSkills.contains(skillId) &&
+            skillDefinitions.containsKey(skillId))
+          skillId,
+    ];
+    if (choices.isEmpty || player.skillRefreshTokens <= 0) return;
+
+    var selectedSkill = choices.first;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('连输奖励'),
+          content: DropdownButtonFormField<String>(
+            initialValue: selectedSkill,
+            decoration: const InputDecoration(labelText: '恢复一张已用技能'),
+            items: [
+              for (final skillId in choices)
+                DropdownMenuItem(
+                  value: skillId,
+                  child: Text(skillDefinitions[skillId]!.name),
+                ),
+            ],
+            onChanged: (value) {
+              if (value != null) setDialogState(() => selectedSkill = value);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(selectedSkill),
+              child: const Text('确认'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null) return;
+
+    setState(() {
+      player.usedSkills.remove(result);
+      player.skillRefreshTokens--;
+    });
+  }
+
   Future<void> activateLock() async {
     final player = players[currentPlayer];
 
     final targets = [
       for (int i = 0; i < players.length; i++)
-        if (i != currentPlayer &&
-            !currentPlays.containsKey(i) &&
-            !players[i].anchorActive)
-          i,
+        if (i != currentPlayer && !currentPlays.containsKey(i)) i,
     ];
     if (targets.isEmpty) {
       showMessage('没有可以锁定的玩家');
@@ -983,12 +1065,23 @@ class _GamePageState extends State<GamePage> {
 
   Future<void> activateAmbush() async {
     final player = players[currentPlayer];
-    final number = await chooseNumberDialog('ambush', '猜一个会出现的数字');
-    if (number == null) return;
+    final targets = [
+      for (int i = 0; i < players.length; i++)
+        if (i != currentPlayer) i,
+    ];
+    if (targets.isEmpty) return;
+
+    final result = await chooseTargetAndNumberDialog(
+      title: 'ambush',
+      targetIndexes: targets,
+      targetName: (index) => players[index].name,
+    );
+    if (result == null) return;
 
     setState(() {
       markLocalSkillUsed(player, 'ambush');
-      player.ambushNumber = number;
+      player.ambushTargetIndex = result.$1;
+      player.ambushNumber = result.$2;
       player.ambushBonus = ambushBonusForRound(round);
     });
   }
@@ -1019,7 +1112,7 @@ class _GamePageState extends State<GamePage> {
     final player = players[currentPlayer];
     final targets = [
       for (int i = 0; i < players.length; i++)
-        if (i != currentPlayer && !players[i].anchorActive) i,
+        if (i != currentPlayer) i,
     ];
     if (targets.isEmpty) {
       showMessage('没有可以禁技的玩家');
@@ -1256,16 +1349,25 @@ class _GamePageState extends State<GamePage> {
         buildSkillHandPanel(
           cards: [
             for (final skillId in player.skillHand)
-              SkillButtonData(
-                definition: skillDefinitions[skillId]!,
-                active: localSkillActive(skillId),
-                used: player.usedSkills.contains(skillId),
-                enabled: localSkillEnabled(skillId),
-                onPressed: () => useLocalSkill(skillId),
-              ),
+              if (skillDefinitions[skillId] != null)
+                SkillButtonData(
+                  definition: skillDefinitions[skillId]!,
+                  active: localSkillActive(skillId),
+                  used: player.usedSkills.contains(skillId),
+                  enabled: localSkillEnabled(skillId),
+                  onPressed: () => useLocalSkill(skillId),
+                ),
           ],
           statusText: localSkillStatusText(player),
         ),
+        if (canRefreshLocalSkill(player)) ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => refreshLocalSkill(player),
+            icon: const Icon(Icons.replay),
+            label: const Text('连输奖励：恢复一张已用技能'),
+          ),
+        ],
         const SizedBox(height: 18),
         Wrap(
           spacing: 10,
@@ -1434,12 +1536,13 @@ class _GamePageState extends State<GamePage> {
       if (revolutionRound) 'revolution：本轮比小',
       if (player.doubleActive) 'double：赢了得分翻倍',
       if (player.mirrorActive) 'mirror：点数变成 10-x',
-      if (player.taxActive) 'tax：从赢家拿 2 分',
+      if (player.taxActive)
+        'tax：从赢家拿 ${taxAmountForPlayerCount(players.length)} 分',
       if (player.insuranceActive) 'insurance：没赢 +3',
-      if (player.anchorActive) 'anchor：本轮免疫干扰',
+      if (defenseRound) 'defense：本轮全部技能失效',
       if (player.lastWordActive) 'last word：并列优先',
-      if (player.ambushNumber != null)
-        'ambush：猜 ${player.ambushNumber}，中了 +${player.ambushBonus}',
+      if (player.ambushTargetIndex != null && player.ambushNumber != null)
+        'ambush：猜 ${players[player.ambushTargetIndex!].name} 出 ${player.ambushNumber}，抢 ${player.ambushBonus} 分',
       if (player.snipeTargetIndex != null && player.snipeNumber != null)
         'snipe：猜 ${players[player.snipeTargetIndex!].name} 出 ${player.snipeNumber}',
       if (currentChaosDeltas.isNotEmpty) 'chaos：本轮每张牌随机 -1/0/+1',
@@ -1783,6 +1886,7 @@ class OnlinePlayer {
     this.insuranceActive = false,
     this.anchorActive = false,
     this.lastWordActive = false,
+    this.ambushTargetId,
     this.ambushNumber,
     this.ambushBonus = 0,
     this.snipeTargetId,
@@ -1790,6 +1894,7 @@ class OnlinePlayer {
     this.loanDebtRounds = 0,
     this.loanStartRound = 0,
     this.lossStreak = 0,
+    this.skillRefreshTokens = 0,
     Set<int>? usedCards,
   }) : skillHand = skillHand ?? [],
        usedSkills = usedSkills ?? {},
@@ -1806,6 +1911,7 @@ class OnlinePlayer {
   bool insuranceActive;
   bool anchorActive;
   bool lastWordActive;
+  String? ambushTargetId;
   int? ambushNumber;
   int ambushBonus;
   String? snipeTargetId;
@@ -1813,6 +1919,7 @@ class OnlinePlayer {
   int loanDebtRounds;
   int loanStartRound;
   int lossStreak;
+  int skillRefreshTokens;
   final Set<int> usedCards;
 
   bool get shouldAvoidFirst =>
@@ -1831,6 +1938,7 @@ class OnlinePlayer {
     insuranceActive = false;
     anchorActive = false;
     lastWordActive = false;
+    ambushTargetId = null;
     ambushNumber = null;
     ambushBonus = 0;
     snipeTargetId = null;
@@ -1838,6 +1946,7 @@ class OnlinePlayer {
     loanDebtRounds = 0;
     loanStartRound = 0;
     lossStreak = 0;
+    skillRefreshTokens = 0;
     usedCards.clear();
   }
 
@@ -1853,6 +1962,7 @@ class OnlinePlayer {
     'insuranceActive': insuranceActive,
     'anchorActive': anchorActive,
     'lastWordActive': lastWordActive,
+    'ambushTargetId': ambushTargetId,
     'ambushNumber': ambushNumber,
     'ambushBonus': ambushBonus,
     'snipeTargetId': snipeTargetId,
@@ -1860,6 +1970,7 @@ class OnlinePlayer {
     'loanDebtRounds': loanDebtRounds,
     'loanStartRound': loanStartRound,
     'lossStreak': lossStreak,
+    'skillRefreshTokens': skillRefreshTokens,
     'usedCards': usedCards.toList(),
   };
 
@@ -1878,6 +1989,7 @@ class OnlinePlayer {
       insuranceActive: (json['insuranceActive'] as bool?) ?? false,
       anchorActive: (json['anchorActive'] as bool?) ?? false,
       lastWordActive: (json['lastWordActive'] as bool?) ?? false,
+      ambushTargetId: json['ambushTargetId'] as String?,
       ambushNumber: json['ambushNumber'] as int?,
       ambushBonus: (json['ambushBonus'] as int?) ?? 0,
       snipeTargetId: json['snipeTargetId'] as String?,
@@ -1885,6 +1997,7 @@ class OnlinePlayer {
       loanDebtRounds: (json['loanDebtRounds'] as int?) ?? 0,
       loanStartRound: (json['loanStartRound'] as int?) ?? 0,
       lossStreak: (json['lossStreak'] as int?) ?? 0,
+      skillRefreshTokens: (json['skillRefreshTokens'] as int?) ?? 0,
       usedCards: ((json['usedCards'] as List<dynamic>?) ?? [])
           .map((item) => item as int)
           .toSet(),
@@ -1941,6 +2054,7 @@ class OnlineRoomState {
     this.turnPosition = 0,
     this.lastSingleWinnerId,
     this.revolutionRound = false,
+    this.defenseRound = false,
     this.revolutionOwnerId,
     Map<String, int>? currentPlays,
     Map<String, int>? lockedCards,
@@ -1966,6 +2080,7 @@ class OnlineRoomState {
   int turnPosition;
   String? lastSingleWinnerId;
   bool revolutionRound;
+  bool defenseRound;
   String? revolutionOwnerId;
   List<OnlinePlayer> players;
   Map<String, int> currentPlays;
@@ -2000,6 +2115,7 @@ class OnlineRoomState {
     'turnPosition': turnPosition,
     'lastSingleWinnerId': lastSingleWinnerId,
     'revolutionRound': revolutionRound,
+    'defenseRound': defenseRound,
     'revolutionOwnerId': revolutionOwnerId,
     'players': players.map((player) => player.toJson()).toList(),
     'currentPlays': currentPlays,
@@ -2042,6 +2158,7 @@ class OnlineRoomState {
       turnPosition: turnPosition,
       lastSingleWinnerId: json['lastSingleWinnerId'] as String?,
       revolutionRound: (json['revolutionRound'] as bool?) ?? false,
+      defenseRound: (json['defenseRound'] as bool?) ?? false,
       revolutionOwnerId: json['revolutionOwnerId'] as String?,
       players: players,
       currentPlays: Map<String, int>.from(json['currentPlays'] as Map),
@@ -2272,6 +2389,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         .onBroadcast(event: 'state', callback: handleState)
         .onBroadcast(event: 'submit_card', callback: handleSubmitCard)
         .onBroadcast(event: 'skill', callback: handleSkill)
+        .onBroadcast(event: 'skill_refresh', callback: handleSkillRefresh)
         .onBroadcast(event: 'next_round', callback: handleNextRound)
         .onBroadcast(event: 'state_request', callback: handleStateRequest)
         .subscribe((status, error) {
@@ -2376,7 +2494,8 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     if (!player.skillHand.contains(type) || player.usedSkills.contains(type)) {
       return;
     }
-    if (room!.silencedPlayers.contains(id) && type != 'anchor') return;
+    if (room!.defenseRound) return;
+    if (room!.silencedPlayers.contains(id) && type != 'defense') return;
 
     switch (type) {
       case 'revolution':
@@ -2400,8 +2519,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
           (item) => item.id == targetId,
         );
         if (targetIndex == -1 ||
-            room!.players[targetIndex].usedCards.contains(card) ||
-            room!.players[targetIndex].anchorActive) {
+            room!.players[targetIndex].usedCards.contains(card)) {
           return;
         }
         player.usedSkills.add(type);
@@ -2415,10 +2533,14 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         player.usedSkills.add(type);
         break;
       case 'ambush':
+        final targetId = payload['targetId'] as String?;
         final number = payload['number'] as int?;
+        if (targetId == null || targetId == id) return;
+        if (!room!.players.any((item) => item.id == targetId)) return;
         if (room!.round >= 9) return;
         if (number == null || number < 1 || number > 9) return;
         player.usedSkills.add(type);
+        player.ambushTargetId = targetId;
         player.ambushNumber = number;
         player.ambushBonus = ambushBonusForRound(room!.round);
         break;
@@ -2443,7 +2565,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         final targetIndex = room!.players.indexWhere(
           (item) => item.id == targetId,
         );
-        if (targetIndex == -1 || room!.players[targetIndex].anchorActive) {
+        if (targetIndex == -1) {
           return;
         }
         player.usedSkills.add(type);
@@ -2464,21 +2586,10 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         player.snipeTargetId = targetId;
         player.snipeNumber = number;
         break;
-      case 'anchor':
-        if (player.anchorActive) return;
+      case 'defense':
         player.usedSkills.add(type);
-        player.anchorActive = true;
-        room!.lockedCards.remove(id);
-        room!.lockOwners.remove(id);
-        room!.silencedPlayers.remove(id);
-        room!.silenceOwners.remove(id);
-        break;
-      case 'loan':
-        if (player.loanDebtRounds > 0) return;
-        player.usedSkills.add(type);
-        player.score += 6;
-        player.loanDebtRounds = 3;
-        player.loanStartRound = room!.round;
+        clearAllOnlineSkillEffects();
+        room!.defenseRound = true;
         break;
       case 'last_word':
         if (player.lastWordActive) return;
@@ -2491,6 +2602,44 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
     setState(() {});
     broadcastState();
+  }
+
+  void handleSkillRefresh(Map<String, dynamic> payload) {
+    if (!isHost || room == null || room!.phase != OnlinePhase.choosing) return;
+
+    final id = payload['id'] as String?;
+    final skillId = payload['skillId'] as String?;
+    if (id == null || skillId == null) return;
+    if (id != room!.activePlayerId) return;
+
+    final playerIndex = room!.players.indexWhere((player) => player.id == id);
+    if (playerIndex == -1) return;
+    final player = room!.players[playerIndex];
+    if (player.skillRefreshTokens <= 0) return;
+    if (!player.skillHand.contains(skillId) ||
+        !player.usedSkills.contains(skillId) ||
+        !skillDefinitions.containsKey(skillId)) {
+      return;
+    }
+
+    player.usedSkills.remove(skillId);
+    player.skillRefreshTokens--;
+    setState(() {});
+    broadcastState();
+  }
+
+  void clearAllOnlineSkillEffects() {
+    room!.revolutionRound = false;
+    room!.revolutionOwnerId = null;
+    room!.lockedCards.clear();
+    room!.lockOwners.clear();
+    room!.silencedPlayers.clear();
+    room!.silenceOwners.clear();
+    room!.chaosDeltas.clear();
+    room!.chaosDelta = 0;
+    for (final player in room!.players) {
+      clearOnlineRoundSkills(player);
+    }
   }
 
   void silenceOnlinePlayer({
@@ -2516,14 +2665,6 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
     room!.chaosDeltas.remove(targetId);
     room!.chaosDelta = room!.chaosDeltas.length;
-
-    if (target.usedSkills.contains('loan') &&
-        target.loanStartRound == room!.round &&
-        target.loanDebtRounds == 3) {
-      target.score -= 6;
-      target.loanDebtRounds = 0;
-      target.loanStartRound = 0;
-    }
 
     clearOnlineRoundSkills(target);
     room!.silencedPlayers.add(targetId);
@@ -2572,6 +2713,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       room!.latestResult = null;
       room!.lastSingleWinnerId = null;
       room!.revolutionRound = false;
+      room!.defenseRound = false;
       room!.revolutionOwnerId = null;
     });
     broadcastState();
@@ -2583,7 +2725,10 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     if (!me.skillHand.contains(skillId) || me.usedSkills.contains(skillId)) {
       return false;
     }
-    if (room!.silencedPlayers.contains(me.id) && skillId != 'anchor') {
+    if (room!.defenseRound) {
+      return false;
+    }
+    if (room!.silencedPlayers.contains(me.id) && skillId != 'defense') {
       return false;
     }
     return switch (skillId) {
@@ -2598,8 +2743,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       'silence' => true,
       'chaos' => true,
       'snipe' => true,
-      'anchor' => !me.anchorActive,
-      'loan' => me.loanDebtRounds == 0,
+      'defense' => true,
       'last_word' => !me.lastWordActive,
       _ => false,
     };
@@ -2614,7 +2758,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       'mirror' => me.mirrorActive,
       'tax' => me.taxActive,
       'insurance' => me.insuranceActive,
-      'anchor' => me.anchorActive,
+      'defense' => room!.defenseRound,
       'last_word' => me.lastWordActive,
       'ambush' => me.ambushNumber != null,
       'snipe' => me.snipeNumber != null,
@@ -2633,6 +2777,71 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     }
   }
 
+  Future<void> sendSkillRefresh(String skillId) async {
+    final payload = {'id': playerId, 'skillId': skillId};
+    if (isHost) {
+      handleSkillRefresh(payload);
+    } else {
+      await send('skill_refresh', payload);
+    }
+  }
+
+  bool canRefreshOnlineSkill(OnlinePlayer player) {
+    return isMyTurn &&
+        player.skillRefreshTokens > 0 &&
+        player.skillHand.any(
+          (skillId) =>
+              player.usedSkills.contains(skillId) &&
+              skillDefinitions.containsKey(skillId),
+        );
+  }
+
+  Future<void> refreshOnlineSkill(OnlinePlayer player) async {
+    final choices = [
+      for (final skillId in player.skillHand)
+        if (player.usedSkills.contains(skillId) &&
+            skillDefinitions.containsKey(skillId))
+          skillId,
+    ];
+    if (choices.isEmpty || player.skillRefreshTokens <= 0) return;
+
+    var selectedSkill = choices.first;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('连输奖励'),
+          content: DropdownButtonFormField<String>(
+            initialValue: selectedSkill,
+            decoration: const InputDecoration(labelText: '恢复一张已用技能'),
+            items: [
+              for (final skillId in choices)
+                DropdownMenuItem(
+                  value: skillId,
+                  child: Text(skillDefinitions[skillId]!.name),
+                ),
+            ],
+            onChanged: (value) {
+              if (value != null) setDialogState(() => selectedSkill = value);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(selectedSkill),
+              child: const Text('确认'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null) return;
+    await sendSkillRefresh(result);
+  }
+
   Future<void> useOnlineSkill(String skillId) async {
     if (!onlineSkillEnabled(skillId)) return;
 
@@ -2642,14 +2851,11 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       case 'mirror':
       case 'tax':
       case 'insurance':
-      case 'anchor':
+      case 'defense':
       case 'last_word':
         await sendSkill({'id': playerId, 'type': skillId});
         break;
       case 'chaos':
-        await sendSkill({'id': playerId, 'type': skillId});
-        break;
-      case 'loan':
         await sendSkill({'id': playerId, 'type': skillId});
         break;
       case 'lock':
@@ -2659,9 +2865,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         await activateOnlinePeek();
         break;
       case 'ambush':
-        final number = await chooseOnlineNumberDialog('ambush', '猜一个会出现的数字');
-        if (number == null) return;
-        await sendSkill({'id': playerId, 'type': skillId, 'number': number});
+        await activateOnlineAmbush();
         break;
       case 'snipe':
         await activateOnlineSnipe();
@@ -2711,9 +2915,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
     final targets = [
       for (final player in room!.players)
-        if (player.id != playerId &&
-            !room!.currentPlays.containsKey(player.id) &&
-            !player.anchorActive)
+        if (player.id != playerId && !room!.currentPlays.containsKey(player.id))
           player,
     ];
     if (targets.isEmpty) {
@@ -2853,6 +3055,74 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     await sendSkill(payload);
   }
 
+  Future<void> activateOnlineAmbush() async {
+    final targets = [
+      for (final player in room!.players)
+        if (player.id != playerId) player,
+    ];
+    if (targets.isEmpty) return;
+
+    var targetId = targets.first.id;
+    var number = 5;
+    final result = await showDialog<(String, int)>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('ambush'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: targetId,
+                decoration: const InputDecoration(labelText: '猜谁'),
+                items: [
+                  for (final player in targets)
+                    DropdownMenuItem(
+                      value: player.id,
+                      child: Text(player.name),
+                    ),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => targetId = value);
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                initialValue: number,
+                decoration: const InputDecoration(labelText: '猜数字'),
+                items: [
+                  for (int i = 1; i <= 9; i++)
+                    DropdownMenuItem(value: i, child: Text('$i')),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => number = value);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop((targetId, number)),
+              child: const Text('确认'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    await sendSkill({
+      'id': playerId,
+      'type': 'ambush',
+      'targetId': result.$1,
+      'number': result.$2,
+    });
+  }
+
   Future<void> activateOnlineSnipe() async {
     final targets = [
       for (final player in room!.players)
@@ -2924,7 +3194,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
   Future<void> activateOnlineSilence() async {
     final targets = [
       for (final player in room!.players)
-        if (player.id != playerId && !player.anchorActive) player,
+        if (player.id != playerId) player,
     ];
     if (targets.isEmpty) {
       showOnlineMessage('没有可以禁技的玩家');
@@ -3057,6 +3327,10 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     if (lastWordCandidates.isNotEmpty) {
       winnerIds = [lastWordCandidates.first];
       reason = '$reason；last word：${playerNameById(winnerIds.first)} 并列优先';
+      currentRoom.players
+          .firstWhere((player) => player.id == winnerIds.first)
+          .usedSkills
+          .remove('last_word');
     } else if (candidates.length == 1) {
       winnerIds = candidates;
     } else if (currentRoom.lastSingleWinnerId != null &&
@@ -3082,9 +3356,21 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
     for (final player in currentRoom.players) {
       if (player.ambushNumber != null &&
-          currentRoom.currentPlays.values.contains(player.ambushNumber)) {
-        player.score += player.ambushBonus;
-        notes.add('ambush：${player.name} +${player.ambushBonus}');
+          player.ambushTargetId != null &&
+          currentRoom.currentPlays[player.ambushTargetId] ==
+              player.ambushNumber) {
+        final target = currentRoom.players.firstWhere(
+          (item) => item.id == player.ambushTargetId,
+        );
+        final steal = min(
+          player.ambushBonus.toDouble(),
+          max(0.0, target.score),
+        );
+        target.score -= steal;
+        player.score += steal;
+        notes.add(
+          'ambush：${player.name} 从 ${target.name} 抢 ${formatScore(steal)} 分',
+        );
       }
 
       if (player.snipeTargetId != null &&
@@ -3103,14 +3389,15 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
     for (final player in currentRoom.players) {
       if (!player.taxActive) continue;
+      final taxAmount = taxAmountForPlayerCount(currentRoom.players.length);
       for (final winnerId in winnerIds) {
         if (winnerId == player.id) continue;
         final winner = currentRoom.players.firstWhere(
           (item) => item.id == winnerId,
         );
-        winner.score -= 2;
-        player.score += 2;
-        notes.add('tax：${player.name} 从 ${winner.name} 拿 2 分');
+        winner.score -= taxAmount;
+        player.score += taxAmount;
+        notes.add('tax：${player.name} 从 ${winner.name} 拿 $taxAmount 分');
       }
     }
 
@@ -3120,17 +3407,14 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         player.lossStreak = 0;
       } else {
         player.lossStreak++;
+        if (player.lossStreak % 4 == 0) {
+          player.skillRefreshTokens++;
+          notes.add('连输奖励：${player.name} 可以恢复 1 张已用技能');
+        }
         if (player.lossStreak >= 2) {
           player.score += 2;
           compensation.add('${player.name} +2');
         }
-      }
-      player.doubleActive = false;
-      if (player.loanDebtRounds > 0 &&
-          player.loanStartRound < currentRoom.round) {
-        player.score -= 2;
-        player.loanDebtRounds--;
-        notes.add('loan：${player.name} -2');
       }
       clearOnlineRoundSkills(player);
     }
@@ -3168,6 +3452,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     player.insuranceActive = false;
     player.anchorActive = false;
     player.lastWordActive = false;
+    player.ambushTargetId = null;
     player.ambushNumber = null;
     player.ambushBonus = 0;
     player.snipeTargetId = null;
@@ -3180,6 +3465,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       resetOnlineTurnOrder();
       room!.phase = OnlinePhase.choosing;
       room!.revolutionRound = false;
+      room!.defenseRound = false;
       room!.revolutionOwnerId = null;
       room!.lockedCards.clear();
       room!.lockOwners.clear();
@@ -3284,16 +3570,25 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
           cards: [
             if (me != null)
               for (final skillId in me.skillHand)
-                SkillButtonData(
-                  definition: skillDefinitions[skillId]!,
-                  active: onlineSkillActive(skillId),
-                  used: me.usedSkills.contains(skillId),
-                  enabled: onlineSkillEnabled(skillId),
-                  onPressed: () => useOnlineSkill(skillId),
-                ),
+                if (skillDefinitions[skillId] != null)
+                  SkillButtonData(
+                    definition: skillDefinitions[skillId]!,
+                    active: onlineSkillActive(skillId),
+                    used: me.usedSkills.contains(skillId),
+                    enabled: onlineSkillEnabled(skillId),
+                    onPressed: () => useOnlineSkill(skillId),
+                  ),
           ],
           statusText: me == null ? '' : onlineSkillStatusText(me),
         ),
+        if (me != null && canRefreshOnlineSkill(me)) ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => refreshOnlineSkill(me),
+            icon: const Icon(Icons.replay),
+            label: const Text('连输奖励：恢复一张已用技能'),
+          ),
+        ],
         const SizedBox(height: 18),
         if (me != null)
           Wrap(
@@ -3482,12 +3777,13 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       if (room!.revolutionRound) 'revolution：本轮比小',
       if (player.doubleActive) 'double：赢了得分翻倍',
       if (player.mirrorActive) 'mirror：点数变成 10-x',
-      if (player.taxActive) 'tax：从赢家拿 2 分',
+      if (player.taxActive)
+        'tax：从赢家拿 ${taxAmountForPlayerCount(room!.players.length)} 分',
       if (player.insuranceActive) 'insurance：没赢 +3',
-      if (player.anchorActive) 'anchor：本轮免疫干扰',
+      if (room!.defenseRound) 'defense：本轮全部技能失效',
       if (player.lastWordActive) 'last word：并列优先',
-      if (player.ambushNumber != null)
-        'ambush：猜 ${player.ambushNumber}，中了 +${player.ambushBonus}',
+      if (player.ambushTargetId != null && player.ambushNumber != null)
+        'ambush：猜 ${playerNameById(player.ambushTargetId!)} 出 ${player.ambushNumber}，抢 ${player.ambushBonus} 分',
       if (player.snipeTargetId != null && player.snipeNumber != null)
         'snipe：猜 ${playerNameById(player.snipeTargetId!)} 出 ${player.snipeNumber}',
       if (room!.chaosDeltas.isNotEmpty) 'chaos：本轮每张牌随机 -1/0/+1',
