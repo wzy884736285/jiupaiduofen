@@ -37,84 +37,99 @@ const skillDefinitions = {
     id: 'revolution',
     name: 'revolution',
     description: '本轮改成比小',
+    detail: '本轮结算规则反转，数字最小的人赢分。特殊规则仍保留：如果场上同时有 1 和 9，revolution 状态下改成 9 赢。',
     icon: Icons.swap_vert,
   ),
   'double': SkillDefinition(
     id: 'double',
     name: 'double',
     description: '赢了得分翻倍',
+    detail: '只影响自己。本轮如果你成为赢家，你拿到的分数翻倍；如果没赢，这张技能不会补偿分数。',
     icon: Icons.close_fullscreen,
   ),
   'lock': SkillDefinition(
     id: 'lock',
     name: 'lock',
     description: '禁别人一个数字',
+    detail: '选择一个还没出牌的对手，并禁止他本轮打出一个指定数字。已经出过牌的人不能被锁，开了 anchor 的人也不能被锁。',
     icon: Icons.block,
   ),
   'peek': SkillDefinition(
     id: 'peek',
     name: 'peek',
     description: '偷看已出的牌',
+    detail: '查看一个本轮已经出牌玩家的数字。适合后手判断当前局势，决定要不要用 revolution、double 或其他技能。',
     icon: Icons.visibility,
   ),
   'ambush': SkillDefinition(
     id: 'ambush',
     name: 'ambush',
     description: '猜中数字 +3',
+    detail: '先猜一个 1 到 9 的数字。结算时只要本轮有人出过这个数字，你额外 +3 分，不要求你赢本轮。',
     icon: Icons.radar,
   ),
   'mirror': SkillDefinition(
     id: 'mirror',
     name: 'mirror',
     description: '点数变成 10-x',
+    detail: '只改变你本轮这张牌的结算点数：1 变 9、2 变 8、5 还是 5、9 变 1。分数池仍按大家实际出的牌计算。',
     icon: Icons.flip,
   ),
   'tax': SkillDefinition(
     id: 'tax',
     name: 'tax',
     description: '从赢家拿 2 分',
+    detail: '本轮结算后，如果别人赢了，你从每个赢家那里拿 2 分；如果你自己就是赢家，不会从自己身上拿分。',
     icon: Icons.account_balance,
   ),
   'insurance': SkillDefinition(
     id: 'insurance',
     name: 'insurance',
     description: '没赢得 +3',
+    detail: '只影响自己。本轮如果你没有赢，结算时额外 +3 分；如果你赢了，就不会触发保险分。',
     icon: Icons.health_and_safety,
   ),
   'silence': SkillDefinition(
     id: 'silence',
     name: 'silence',
     description: '禁别人本轮技能',
+    detail: '选择一个还没出牌的对手，让他本轮不能再使用技能。已经出过牌的人不能被禁技，开了 anchor 的人免疫。',
     icon: Icons.volume_off,
   ),
   'chaos': SkillDefinition(
     id: 'chaos',
     name: 'chaos',
     description: '分数池随机 +/-3',
+    detail: '立刻随机改变本轮分数池：可能 +3，也可能 -3。最终分数池最低不会低于 0，适合打乱稳定局面。',
     icon: Icons.casino,
   ),
   'snipe': SkillDefinition(
     id: 'snipe',
     name: 'snipe',
     description: '猜中某人 +5',
+    detail: '选择一个对手并猜他本轮会出的数字。结算时如果猜中，你额外 +5 分，不要求你赢本轮。',
     icon: Icons.center_focus_strong,
   ),
   'anchor': SkillDefinition(
     id: 'anchor',
     name: 'anchor',
     description: '本轮免疫干扰',
+    detail:
+        '只保护自己。本轮免疫 lock 和 silence；如果你已经被 lock 或 silence，使用 anchor 会立刻解除这些干扰。',
     icon: Icons.anchor,
   ),
   'loan': SkillDefinition(
     id: 'loan',
     name: 'loan',
     description: '立刻 +6，之后3轮各扣2',
+    detail: '立刻获得 6 分。之后从下一轮开始，连续 3 轮每轮结算时扣 2 分。欠分还完前不能再次使用 loan。',
     icon: Icons.payments,
   ),
   'last_word': SkillDefinition(
     id: 'last_word',
     name: 'last word',
     description: '并列时优先赢',
+    detail: '只影响自己。本轮如果你和别人并列成为目标数字，优先判定你单独获胜；没有并列时不会改变结果。',
     icon: Icons.record_voice_over,
   ),
 };
@@ -124,12 +139,14 @@ class SkillDefinition {
     required this.id,
     required this.name,
     required this.description,
+    required this.detail,
     required this.icon,
   });
 
   final String id;
   final String name;
   final String description;
+  final String detail;
   final IconData icon;
 }
 
@@ -1447,10 +1464,16 @@ Widget buildSkillCatalogPanel() {
 
 Widget buildSkillCatalogList() {
   return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
     children: [
+      const Text(
+        '每局每人随机抽 3 张技能牌，每张技能牌一局只能用一次。',
+        style: TextStyle(fontSize: 13, color: Colors.black54),
+      ),
+      const SizedBox(height: 8),
       for (final skillId in skillDeck)
         Padding(
-          padding: const EdgeInsets.symmetric(vertical: 5),
+          padding: const EdgeInsets.symmetric(vertical: 7),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1469,10 +1492,11 @@ Widget buildSkillCatalogList() {
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                     Text(
-                      skillDefinitions[skillId]!.description,
+                      skillDefinitions[skillId]!.detail,
                       style: const TextStyle(
                         fontSize: 13,
                         color: Colors.black54,
+                        height: 1.35,
                       ),
                     ),
                   ],
