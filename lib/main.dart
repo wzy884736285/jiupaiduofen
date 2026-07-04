@@ -32,6 +32,9 @@ const skillDeck = [
   'last_word',
 ];
 
+const skillsThatNeedLaterPlayers = {'lock', 'silence'};
+const skillsThatNeedEarlierPlayers = {'peek'};
+
 const skillDefinitions = {
   'revolution': SkillDefinition(
     id: 'revolution',
@@ -155,6 +158,42 @@ List<String> drawSkillHand(Random random) {
   return deck.take(3).toList();
 }
 
+bool hasAnySkill(List<String> hand, Set<String> skillIds) {
+  return hand.any(skillIds.contains);
+}
+
+List<int> makeFairTurnOrder({
+  required int count,
+  required bool Function(int index) avoidsFirst,
+  required bool Function(int index) avoidsLast,
+  Random? random,
+}) {
+  final randomizer = random ?? Random();
+  if (count <= 1) return List.generate(count, (index) => index);
+
+  final firstCandidates = [
+    for (var index = 0; index < count; index++)
+      if (!avoidsFirst(index)) index,
+  ]..shuffle(randomizer);
+  final lastCandidates = [
+    for (var index = 0; index < count; index++)
+      if (!avoidsLast(index)) index,
+  ]..shuffle(randomizer);
+
+  for (final first in firstCandidates) {
+    for (final last in lastCandidates) {
+      if (first == last) continue;
+      final middle = [
+        for (var index = 0; index < count; index++)
+          if (index != first && index != last) index,
+      ]..shuffle(randomizer);
+      return [first, ...middle, last];
+    }
+  }
+
+  return List.generate(count, (index) => index)..shuffle(randomizer);
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -267,6 +306,31 @@ class Player {
   int loanDebtRounds = 0;
   int loanStartRound = 0;
   int lossStreak = 0;
+
+  bool get shouldAvoidFirst =>
+      hasAnySkill(skillHand, skillsThatNeedEarlierPlayers);
+
+  bool get shouldAvoidLast =>
+      hasAnySkill(skillHand, skillsThatNeedLaterPlayers);
+
+  void resetForNewGame(Random random) {
+    score = 0;
+    usedCards.clear();
+    skillHand = drawSkillHand(random);
+    usedSkills.clear();
+    doubleActive = false;
+    mirrorActive = false;
+    taxActive = false;
+    insuranceActive = false;
+    anchorActive = false;
+    lastWordActive = false;
+    ambushNumber = null;
+    snipeTargetIndex = null;
+    snipeNumber = null;
+    loanDebtRounds = 0;
+    loanStartRound = 0;
+    lossStreak = 0;
+  }
 }
 
 class RoundResult {
@@ -326,8 +390,11 @@ class _GamePageState extends State<GamePage> {
   }
 
   void resetLocalTurnOrder() {
-    turnOrder = List.generate(players.length, (index) => index)
-      ..shuffle(Random());
+    turnOrder = makeFairTurnOrder(
+      count: players.length,
+      avoidsFirst: (index) => players[index].shouldAvoidFirst,
+      avoidsLast: (index) => players[index].shouldAvoidLast,
+    );
     turnPosition = 0;
   }
 
@@ -568,6 +635,27 @@ class _GamePageState extends State<GamePage> {
       currentLocks.clear();
       currentSilenced.clear();
       currentChaosDelta = 0;
+    });
+  }
+
+  void restartSamePlayers() {
+    final random = Random();
+    setState(() {
+      for (final player in players) {
+        player.resetForNewGame(random);
+      }
+      phase = Phase.choosing;
+      round = 1;
+      resetLocalTurnOrder();
+      selectedCard = null;
+      lastSingleWinner = null;
+      revolutionRound = false;
+      currentLocks.clear();
+      currentSilenced.clear();
+      currentChaosDelta = 0;
+      currentPlays.clear();
+      history.clear();
+      latestResult = null;
     });
   }
 
@@ -1237,7 +1325,12 @@ class _GamePageState extends State<GamePage> {
               ),
             ),
           const SizedBox(height: 12),
-          FilledButton(onPressed: restart, child: const Text('重新开始')),
+          FilledButton(
+            onPressed: restartSamePlayers,
+            child: const Text('重开新一把'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton(onPressed: restart, child: const Text('重新设置人数')),
         ] else ...[
           const SizedBox(height: 18),
           FilledButton(onPressed: nextRound, child: const Text('下一轮')),
@@ -1649,6 +1742,31 @@ class OnlinePlayer {
   int lossStreak;
   final Set<int> usedCards;
 
+  bool get shouldAvoidFirst =>
+      hasAnySkill(skillHand, skillsThatNeedEarlierPlayers);
+
+  bool get shouldAvoidLast =>
+      hasAnySkill(skillHand, skillsThatNeedLaterPlayers);
+
+  void resetForNewGame(Random random) {
+    score = 0;
+    skillHand = drawSkillHand(random);
+    usedSkills.clear();
+    doubleActive = false;
+    mirrorActive = false;
+    taxActive = false;
+    insuranceActive = false;
+    anchorActive = false;
+    lastWordActive = false;
+    ambushNumber = null;
+    snipeTargetId = null;
+    snipeNumber = null;
+    loanDebtRounds = 0;
+    loanStartRound = 0;
+    lossStreak = 0;
+    usedCards.clear();
+  }
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
@@ -2018,8 +2136,14 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
   void resetOnlineTurnOrder() {
     if (room == null) return;
-    room!.turnOrder = room!.players.map((player) => player.id).toList()
-      ..shuffle(Random());
+    final orderIndexes = makeFairTurnOrder(
+      count: room!.players.length,
+      avoidsFirst: (index) => room!.players[index].shouldAvoidFirst,
+      avoidsLast: (index) => room!.players[index].shouldAvoidLast,
+    );
+    room!.turnOrder = orderIndexes
+        .map((index) => room!.players[index].id)
+        .toList();
     room!.turnPosition = 0;
     room!.syncCurrentPlayerIndex();
   }
@@ -2293,6 +2417,10 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     if (room!.players.length != room!.playerCount) return;
 
     setState(() {
+      final random = Random();
+      for (final player in room!.players) {
+        player.resetForNewGame(random);
+      }
       room!.phase = OnlinePhase.choosing;
       room!.round = 1;
       resetOnlineTurnOrder();
@@ -3146,6 +3274,11 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
                 style: const TextStyle(fontSize: 18),
               ),
             ),
+          const SizedBox(height: 12),
+          if (isHost)
+            FilledButton(onPressed: startOnlineGame, child: const Text('重开新一把'))
+          else
+            const Text('等待房主重开新一把', style: TextStyle(fontSize: 18)),
         ] else ...[
           const SizedBox(height: 18),
           FilledButton(
