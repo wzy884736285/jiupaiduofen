@@ -31,6 +31,20 @@
 
   <title>mini_game</title>
   <link rel="manifest" href="manifest.json">
+  <script>
+    const appVersion = 'random-turn-order-v1';
+    if (localStorage.getItem('jiupaiduofen-version') !== appVersion) {
+      localStorage.setItem('jiupaiduofen-version', appVersion);
+      if ('caches' in window) {
+        caches.keys().then((keys) => keys.forEach((key) => caches.delete(key)));
+      }
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then((registrations) => {
+          registrations.forEach((registration) => registration.unregister());
+        });
+      }
+    }
+  </script>
 </head>
 <body>
   <!--
@@ -41,39 +55,6 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
-  <script>
-    (function () {
-      const cacheKey = 'jiupaiduofen-cache-cleared-v11';
-
-      function loadFlutter() {
-        const script = document.createElement('script');
-        script.src = 'flutter_bootstrap.js?v=11';
-        script.async = true;
-        document.body.appendChild(script);
-      }
-
-      async function clearFlutterCache() {
-        if ('serviceWorker' in navigator) {
-          const registrations = await navigator.serviceWorker.getRegistrations();
-          await Promise.all(registrations.map((registration) => registration.unregister()));
-        }
-
-        if ('caches' in window) {
-          const keys = await caches.keys();
-          await Promise.all(keys.map((key) => caches.delete(key)));
-        }
-      }
-
-      if (sessionStorage.getItem(cacheKey)) {
-        loadFlutter();
-        return;
-      }
-
-      sessionStorage.setItem(cacheKey, '1');
-      clearFlutterCache()
-        .then(() => window.location.reload())
-        .catch(loadFlutter);
-    })();
-  </script>
+  <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

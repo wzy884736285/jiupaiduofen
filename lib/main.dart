@@ -1,4 +1,4 @@
-﻿import 'dart:math';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -142,10 +142,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   if (hasSupabaseConfig) {
-    await Supabase.initialize(
-      url: supabaseUrl,
-      publishableKey: supabaseKey,
-    );
+    await Supabase.initialize(url: supabaseUrl, publishableKey: supabaseKey);
   }
 
   runApp(const NumberBattleApp(onlineEnabled: hasSupabaseConfig));
@@ -196,9 +193,9 @@ class HomePage extends StatelessWidget {
               ),
               const SizedBox(height: 18),
               FilledButton.icon(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const GamePage()),
-                ),
+                onPressed: () => Navigator.of(
+                  context,
+                ).push(MaterialPageRoute(builder: (_) => const GamePage())),
                 icon: const Icon(Icons.phone_android),
                 label: const Padding(
                   padding: EdgeInsets.all(14),
@@ -209,7 +206,8 @@ class HomePage extends StatelessWidget {
               FilledButton.icon(
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) => OnlineLobbyPage(onlineEnabled: onlineEnabled),
+                    builder: (_) =>
+                        OnlineLobbyPage(onlineEnabled: onlineEnabled),
                   ),
                 ),
                 icon: const Icon(Icons.public),
@@ -285,7 +283,8 @@ class _GamePageState extends State<GamePage> {
   Phase phase = Phase.setup;
   int playerCount = 3;
   int round = 1;
-  int currentPlayer = 0;
+  List<int> turnOrder = [];
+  int turnPosition = 0;
   int? selectedCard;
   int? lastSingleWinner;
   bool revolutionRound = false;
@@ -303,25 +302,39 @@ class _GamePageState extends State<GamePage> {
   final List<RoundResult> history = [];
   RoundResult? latestResult;
 
+  int get currentPlayer {
+    if (turnOrder.isEmpty) return 0;
+    final position = turnPosition.clamp(0, turnOrder.length - 1).toInt();
+    return turnOrder[position];
+  }
+
+  void resetLocalTurnOrder() {
+    turnOrder = List.generate(players.length, (index) => index)
+      ..shuffle(Random());
+    turnPosition = 0;
+  }
+
+  String localTurnOrderText() {
+    if (turnOrder.isEmpty) return '';
+    return turnOrder.map((index) => players[index].name).join(' → ');
+  }
+
   void startGame() {
     final random = Random();
-    players = List.generate(
-      playerCount,
-      (index) {
-        final player = Player(
-          nameControllers[index].text.trim().isEmpty
-              ? '玩家${index + 1}'
-              : nameControllers[index].text.trim(),
-        );
-        player.skillHand = drawSkillHand(random);
-        return player;
-      },
-    );
+    players = List.generate(playerCount, (index) {
+      final player = Player(
+        nameControllers[index].text.trim().isEmpty
+            ? '玩家${index + 1}'
+            : nameControllers[index].text.trim(),
+      );
+      player.skillHand = drawSkillHand(random);
+      return player;
+    });
 
     setState(() {
       phase = Phase.choosing;
       round = 1;
-      currentPlayer = 0;
+      resetLocalTurnOrder();
       selectedCard = null;
       lastSingleWinner = null;
       revolutionRound = false;
@@ -342,8 +355,8 @@ class _GamePageState extends State<GamePage> {
 
     setState(() {
       selectedCard = null;
-      if (currentPlayer < players.length - 1) {
-        currentPlayer++;
+      if (turnPosition < turnOrder.length - 1) {
+        turnPosition++;
       } else {
         finishRound();
       }
@@ -362,10 +375,15 @@ class _GamePageState extends State<GamePage> {
       }
     }
 
-    final rawPool = effectivePlays.values.fold<int>(0, (sum, card) => sum + card);
+    final rawPool = effectivePlays.values.fold<int>(
+      0,
+      (sum, card) => sum + card,
+    );
     final pool = max(0, rawPool + currentChaosDelta);
     if (currentChaosDelta != 0) {
-      notes.add('chaos：分数池 ${currentChaosDelta > 0 ? '+' : ''}$currentChaosDelta');
+      notes.add(
+        'chaos：分数池 ${currentChaosDelta > 0 ? '+' : ''}$currentChaosDelta',
+      );
     }
 
     final values = effectivePlays.values.toList();
@@ -396,8 +414,9 @@ class _GamePageState extends State<GamePage> {
 
     List<int> winners;
 
-    final lastWordCandidates =
-        candidates.where((index) => players[index].lastWordActive).toList();
+    final lastWordCandidates = candidates
+        .where((index) => players[index].lastWordActive)
+        .toList();
     if (lastWordCandidates.isNotEmpty) {
       winners = [lastWordCandidates.first];
       reason = '$reason；last word：${players[winners.first].name} 并列优先';
@@ -506,7 +525,7 @@ class _GamePageState extends State<GamePage> {
   void nextRound() {
     setState(() {
       round++;
-      currentPlayer = 0;
+      resetLocalTurnOrder();
       selectedCard = null;
       revolutionRound = false;
       currentLocks.clear();
@@ -524,7 +543,8 @@ class _GamePageState extends State<GamePage> {
       history.clear();
       latestResult = null;
       round = 1;
-      currentPlayer = 0;
+      turnOrder.clear();
+      turnPosition = 0;
       selectedCard = null;
       lastSingleWinner = null;
       revolutionRound = false;
@@ -536,7 +556,8 @@ class _GamePageState extends State<GamePage> {
 
   bool localSkillEnabled(String skillId) {
     final player = players[currentPlayer];
-    if (!player.skillHand.contains(skillId) || player.usedSkills.contains(skillId)) {
+    if (!player.skillHand.contains(skillId) ||
+        player.usedSkills.contains(skillId)) {
       return false;
     }
     if (currentSilenced.contains(currentPlayer) && skillId != 'anchor') {
@@ -695,7 +716,10 @@ class _GamePageState extends State<GamePage> {
                 decoration: const InputDecoration(labelText: '锁定玩家'),
                 items: [
                   for (final index in targets)
-                    DropdownMenuItem(value: index, child: Text(players[index].name)),
+                    DropdownMenuItem(
+                      value: index,
+                      child: Text(players[index].name),
+                    ),
                 ],
                 onChanged: (value) {
                   if (value != null) setDialogState(() => target = value);
@@ -761,7 +785,10 @@ class _GamePageState extends State<GamePage> {
                 title: Text(players[index].name),
                 trailing: Text(
                   '${currentPlays[index]}',
-                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
           ],
@@ -834,7 +861,10 @@ class _GamePageState extends State<GamePage> {
             decoration: const InputDecoration(labelText: '禁技玩家'),
             items: [
               for (final index in targets)
-                DropdownMenuItem(value: index, child: Text(players[index].name)),
+                DropdownMenuItem(
+                  value: index,
+                  child: Text(players[index].name),
+                ),
             ],
             onChanged: (value) {
               if (value != null) setDialogState(() => target = value);
@@ -914,7 +944,10 @@ class _GamePageState extends State<GamePage> {
                 decoration: const InputDecoration(labelText: '选择玩家'),
                 items: [
                   for (final index in targetIndexes)
-                    DropdownMenuItem(value: index, child: Text(targetName(index))),
+                    DropdownMenuItem(
+                      value: index,
+                      child: Text(targetName(index)),
+                    ),
                 ],
                 onChanged: (value) {
                   if (value != null) setDialogState(() => target = value);
@@ -950,7 +983,9 @@ class _GamePageState extends State<GamePage> {
   }
 
   void showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -979,8 +1014,10 @@ class _GamePageState extends State<GamePage> {
   Widget buildSetup() {
     return ListView(
       children: [
-        const Text('选择人数',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+        const Text(
+          '选择人数',
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        ),
         const SizedBox(height: 12),
         SegmentedButton<int>(
           segments: const [
@@ -990,7 +1027,8 @@ class _GamePageState extends State<GamePage> {
             ButtonSegment(value: 5, label: Text('5人')),
           ],
           selected: {playerCount},
-          onSelectionChanged: (value) => setState(() => playerCount = value.first),
+          onSelectionChanged: (value) =>
+              setState(() => playerCount = value.first),
         ),
         const SizedBox(height: 24),
         for (int i = 0; i < playerCount; i++)
@@ -1022,11 +1060,20 @@ class _GamePageState extends State<GamePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('第 $round / 9 轮',
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        Text(
+          '第 $round / 9 轮',
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+        ),
         const SizedBox(height: 8),
-        Text('请 ${player.name} 出牌',
-            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+        Text(
+          '本轮顺序：${localTurnOrderText()}',
+          style: const TextStyle(fontSize: 15, color: Color(0xFF55524A)),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '请 ${player.name} 出牌',
+          style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+        ),
         const SizedBox(height: 10),
         buildSkillHandPanel(
           cards: [
@@ -1059,13 +1106,18 @@ class _GamePageState extends State<GamePage> {
                     ? null
                     : () => setState(() => selectedCard = card),
                 style: FilledButton.styleFrom(
-                  backgroundColor:
-                      selected ? const Color(0xFFE09F3E) : const Color(0xFF2E7D6F),
+                  backgroundColor: selected
+                      ? const Color(0xFFE09F3E)
+                      : const Color(0xFF2E7D6F),
                   disabledBackgroundColor: Colors.black12,
                 ),
-                child: Text('$card',
-                    style: const TextStyle(
-                        fontSize: 28, fontWeight: FontWeight.bold)),
+                child: Text(
+                  '$card',
+                  style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             );
           }),
@@ -1117,38 +1169,53 @@ class _GamePageState extends State<GamePage> {
                 for (int i = 0; i < players.length; i++)
                   ListTile(
                     title: Text(players[i].name),
-                    trailing:
-                        Text('${result.plays[i]}', style: const TextStyle(fontSize: 24)),
+                    trailing: Text(
+                      '${result.plays[i]}',
+                      style: const TextStyle(fontSize: 24),
+                    ),
                   ),
                 const Divider(),
-                Text('本轮分数池：${result.pool}',
-                    style: const TextStyle(fontSize: 18)),
+                Text(
+                  '本轮分数池：${result.pool}',
+                  style: const TextStyle(fontSize: 18),
+                ),
                 const SizedBox(height: 8),
                 Text(result.reason, textAlign: TextAlign.center),
                 const SizedBox(height: 8),
                 Text(
                   '获胜：${result.winners.map((i) => players[i].name).join('、')}',
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ],
             ),
           ),
         ),
         const SizedBox(height: 12),
-        buildScoreBoard(players.map((p) => ScoreLine(p.name, p.score)).toList()),
+        buildScoreBoard(
+          players.map((p) => ScoreLine(p.name, p.score)).toList(),
+        ),
         const SizedBox(height: 12),
         buildCardMemoryBoard(localCardMemoryLines()),
         if (finished) ...[
           const SizedBox(height: 18),
-          const Text('最终排名',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+          const Text(
+            '最终排名',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 8),
           for (final player in sorted)
             ListTile(
-              leading: Icon(player.score == topScore ? Icons.emoji_events : Icons.person),
+              leading: Icon(
+                player.score == topScore ? Icons.emoji_events : Icons.person,
+              ),
               title: Text(player.name),
-              trailing: Text(formatScore(player.score),
-                  style: const TextStyle(fontSize: 18)),
+              trailing: Text(
+                formatScore(player.score),
+                style: const TextStyle(fontSize: 18),
+              ),
             ),
           const SizedBox(height: 12),
           FilledButton(onPressed: restart, child: const Text('重新开始')),
@@ -1239,8 +1306,10 @@ Widget buildSkillHandPanel({
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('技能牌',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text(
+            '技能牌',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,
@@ -1252,8 +1321,8 @@ Widget buildSkillHandPanel({
                   label: card.used
                       ? '${card.definition.name} 已用'
                       : card.active
-                          ? '${card.definition.name} 已启动'
-                          : card.definition.name,
+                      ? '${card.definition.name} 已启动'
+                      : card.definition.name,
                   description: card.definition.description,
                   active: card.active,
                   used: card.used,
@@ -1264,10 +1333,7 @@ Widget buildSkillHandPanel({
           ),
           if (statusText.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Text(
-              statusText,
-              style: const TextStyle(color: Colors.black54),
-            ),
+            Text(statusText, style: const TextStyle(color: Colors.black54)),
           ],
         ],
       ),
@@ -1319,7 +1385,10 @@ Widget buildSkillButton({
           Text(
             description,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 12, color: textColor.withValues(alpha: 0.75)),
+            style: TextStyle(
+              fontSize: 12,
+              color: textColor.withValues(alpha: 0.75),
+            ),
           ),
         ],
       ),
@@ -1333,8 +1402,10 @@ Widget buildScoreBoard(List<ScoreLine> scores) {
       padding: const EdgeInsets.all(12),
       child: Column(
         children: [
-          const Text('当前分数',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text(
+            '当前分数',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 8),
           for (final score in scores)
             Row(
@@ -1357,8 +1428,10 @@ Widget buildCardMemoryBoard(List<CardMemoryLine> lines) {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('记牌器',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text(
+            '记牌器',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 8),
           for (final line in lines)
             Padding(
@@ -1376,8 +1449,10 @@ Widget buildCardMemoryBoard(List<CardMemoryLine> lines) {
                   ),
                   Expanded(
                     child: line.cards.isEmpty
-                        ? const Text('还没有公开出牌',
-                            style: TextStyle(color: Colors.black54))
+                        ? const Text(
+                            '还没有公开出牌',
+                            style: TextStyle(color: Colors.black54),
+                          )
                         : Wrap(
                             spacing: 6,
                             runSpacing: 6,
@@ -1438,9 +1513,9 @@ class OnlinePlayer {
     this.loanStartRound = 0,
     this.lossStreak = 0,
     Set<int>? usedCards,
-  })  : skillHand = skillHand ?? [],
-        usedSkills = usedSkills ?? {},
-        usedCards = usedCards ?? {};
+  }) : skillHand = skillHand ?? [],
+       usedSkills = usedSkills ?? {},
+       usedCards = usedCards ?? {};
 
   final String id;
   final String name;
@@ -1462,25 +1537,25 @@ class OnlinePlayer {
   final Set<int> usedCards;
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'score': score,
-        'skillHand': skillHand,
-        'usedSkills': usedSkills.toList(),
-        'doubleActive': doubleActive,
-        'mirrorActive': mirrorActive,
-        'taxActive': taxActive,
-        'insuranceActive': insuranceActive,
-        'anchorActive': anchorActive,
-        'lastWordActive': lastWordActive,
-        'ambushNumber': ambushNumber,
-        'snipeTargetId': snipeTargetId,
-        'snipeNumber': snipeNumber,
-        'loanDebtRounds': loanDebtRounds,
-        'loanStartRound': loanStartRound,
-        'lossStreak': lossStreak,
-        'usedCards': usedCards.toList(),
-      };
+    'id': id,
+    'name': name,
+    'score': score,
+    'skillHand': skillHand,
+    'usedSkills': usedSkills.toList(),
+    'doubleActive': doubleActive,
+    'mirrorActive': mirrorActive,
+    'taxActive': taxActive,
+    'insuranceActive': insuranceActive,
+    'anchorActive': anchorActive,
+    'lastWordActive': lastWordActive,
+    'ambushNumber': ambushNumber,
+    'snipeTargetId': snipeTargetId,
+    'snipeNumber': snipeNumber,
+    'loanDebtRounds': loanDebtRounds,
+    'loanStartRound': loanStartRound,
+    'lossStreak': lossStreak,
+    'usedCards': usedCards.toList(),
+  };
 
   factory OnlinePlayer.fromJson(Map<String, dynamic> json) {
     return OnlinePlayer(
@@ -1488,8 +1563,9 @@ class OnlinePlayer {
       name: json['name'] as String,
       score: (json['score'] as num).toDouble(),
       skillHand: List<String>.from((json['skillHand'] as List?) ?? const []),
-      usedSkills:
-          List<String>.from((json['usedSkills'] as List?) ?? const []).toSet(),
+      usedSkills: List<String>.from(
+        (json['usedSkills'] as List?) ?? const [],
+      ).toSet(),
       doubleActive: (json['doubleActive'] as bool?) ?? false,
       mirrorActive: (json['mirrorActive'] as bool?) ?? false,
       taxActive: (json['taxActive'] as bool?) ?? false,
@@ -1502,8 +1578,9 @@ class OnlinePlayer {
       loanDebtRounds: (json['loanDebtRounds'] as int?) ?? 0,
       loanStartRound: (json['loanStartRound'] as int?) ?? 0,
       lossStreak: (json['lossStreak'] as int?) ?? 0,
-      usedCards:
-          ((json['usedCards'] as List<dynamic>?) ?? []).map((item) => item as int).toSet(),
+      usedCards: ((json['usedCards'] as List<dynamic>?) ?? [])
+          .map((item) => item as int)
+          .toSet(),
     );
   }
 }
@@ -1526,13 +1603,13 @@ class OnlineRoundResult {
   final bool revolution;
 
   Map<String, dynamic> toJson() => {
-        'round': round,
-        'plays': plays,
-        'pool': pool,
-        'winnerIds': winnerIds,
-        'reason': reason,
-        'revolution': revolution,
-      };
+    'round': round,
+    'plays': plays,
+    'pool': pool,
+    'winnerIds': winnerIds,
+    'reason': reason,
+    'revolution': revolution,
+  };
 
   factory OnlineRoundResult.fromJson(Map<String, dynamic> json) {
     return OnlineRoundResult(
@@ -1553,6 +1630,8 @@ class OnlineRoomState {
     required this.players,
     this.round = 1,
     this.currentPlayerIndex = 0,
+    List<String>? turnOrder,
+    this.turnPosition = 0,
     this.lastSingleWinnerId,
     this.revolutionRound = false,
     Map<String, int>? currentPlays,
@@ -1560,14 +1639,17 @@ class OnlineRoomState {
     Set<String>? silencedPlayers,
     this.chaosDelta = 0,
     this.latestResult,
-  })  : currentPlays = currentPlays ?? {},
-        lockedCards = lockedCards ?? {},
-        silencedPlayers = silencedPlayers ?? {};
+  }) : currentPlays = currentPlays ?? {},
+       lockedCards = lockedCards ?? {},
+       silencedPlayers = silencedPlayers ?? {},
+       turnOrder = turnOrder ?? players.map((player) => player.id).toList();
 
   OnlinePhase phase;
   int playerCount;
   int round;
   int currentPlayerIndex;
+  List<String> turnOrder;
+  int turnPosition;
   String? lastSingleWinnerId;
   bool revolutionRound;
   List<OnlinePlayer> players;
@@ -1577,36 +1659,73 @@ class OnlineRoomState {
   int chaosDelta;
   OnlineRoundResult? latestResult;
 
+  String? get activePlayerId {
+    if (turnOrder.isEmpty) return null;
+    final position = turnPosition.clamp(0, turnOrder.length - 1).toInt();
+    return turnOrder[position];
+  }
+
+  void syncCurrentPlayerIndex() {
+    final id = activePlayerId;
+    currentPlayerIndex = id == null
+        ? 0
+        : players.indexWhere((player) => player.id == id);
+    if (currentPlayerIndex < 0) currentPlayerIndex = 0;
+  }
+
   Map<String, dynamic> toJson() => {
-        'phase': phase.name,
-        'playerCount': playerCount,
-        'round': round,
-        'currentPlayerIndex': currentPlayerIndex,
-        'lastSingleWinnerId': lastSingleWinnerId,
-        'revolutionRound': revolutionRound,
-        'players': players.map((player) => player.toJson()).toList(),
-        'currentPlays': currentPlays,
-        'lockedCards': lockedCards,
-        'silencedPlayers': silencedPlayers.toList(),
-        'chaosDelta': chaosDelta,
-        'latestResult': latestResult?.toJson(),
-      };
+    'phase': phase.name,
+    'playerCount': playerCount,
+    'round': round,
+    'currentPlayerIndex': currentPlayerIndex,
+    'turnOrder': turnOrder,
+    'turnPosition': turnPosition,
+    'lastSingleWinnerId': lastSingleWinnerId,
+    'revolutionRound': revolutionRound,
+    'players': players.map((player) => player.toJson()).toList(),
+    'currentPlays': currentPlays,
+    'lockedCards': lockedCards,
+    'silencedPlayers': silencedPlayers.toList(),
+    'chaosDelta': chaosDelta,
+    'latestResult': latestResult?.toJson(),
+  };
 
   factory OnlineRoomState.fromJson(Map<String, dynamic> json) {
+    final players = (json['players'] as List<dynamic>)
+        .map(
+          (item) =>
+              OnlinePlayer.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList();
+    final playerIds = players.map((player) => player.id).toSet();
+    final savedTurnOrder = List<String>.from(
+      (json['turnOrder'] as List?) ?? const [],
+    ).where(playerIds.contains).toList();
+    final turnOrder = savedTurnOrder.length == players.length
+        ? savedTurnOrder
+        : players.map((player) => player.id).toList();
+    final fallbackPosition =
+        (json['turnPosition'] as int?) ??
+        (json['currentPlayerIndex'] as int?) ??
+        0;
+    final maxPosition = turnOrder.isEmpty ? 0 : turnOrder.length - 1;
+    final turnPosition = fallbackPosition.clamp(0, maxPosition).toInt();
+
     return OnlineRoomState(
       phase: OnlinePhase.values.byName(json['phase'] as String),
       playerCount: json['playerCount'] as int,
       round: json['round'] as int,
-      currentPlayerIndex: json['currentPlayerIndex'] as int,
+      currentPlayerIndex: (json['currentPlayerIndex'] as int?) ?? turnPosition,
+      turnOrder: turnOrder,
+      turnPosition: turnPosition,
       lastSingleWinnerId: json['lastSingleWinnerId'] as String?,
       revolutionRound: (json['revolutionRound'] as bool?) ?? false,
-      players: (json['players'] as List<dynamic>)
-          .map((item) => OnlinePlayer.fromJson(Map<String, dynamic>.from(item as Map)))
-          .toList(),
+      players: players,
       currentPlays: Map<String, int>.from(json['currentPlays'] as Map),
       lockedCards: Map<String, int>.from((json['lockedCards'] as Map?) ?? {}),
-      silencedPlayers:
-          List<String>.from((json['silencedPlayers'] as List?) ?? const []).toSet(),
+      silencedPlayers: List<String>.from(
+        (json['silencedPlayers'] as List?) ?? const [],
+      ).toSet(),
       chaosDelta: (json['chaosDelta'] as int?) ?? 0,
       latestResult: json['latestResult'] == null
           ? null
@@ -1700,8 +1819,10 @@ class _OnlineLobbyPageState extends State<OnlineLobbyPage> {
                 ),
               ),
               const SizedBox(height: 18),
-              const Text('创建房间人数',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text(
+                '创建房间人数',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 8),
               SegmentedButton<int>(
                 segments: const [
@@ -1711,7 +1832,8 @@ class _OnlineLobbyPageState extends State<OnlineLobbyPage> {
                   ButtonSegment(value: 5, label: Text('5人')),
                 ],
                 selected: {playerCount},
-                onSelectionChanged: (value) => setState(() => playerCount = value.first),
+                onSelectionChanged: (value) =>
+                    setState(() => playerCount = value.first),
               ),
               const SizedBox(height: 18),
               FilledButton.icon(
@@ -1779,12 +1901,33 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       room?.players.indexWhere((player) => player.id == playerId) ?? -1;
 
   bool get isMyTurn =>
-      room?.phase == OnlinePhase.choosing && myIndex == room?.currentPlayerIndex;
+      room?.phase == OnlinePhase.choosing && room?.activePlayerId == playerId;
+
+  void resetOnlineTurnOrder() {
+    if (room == null) return;
+    room!.turnOrder = room!.players.map((player) => player.id).toList()
+      ..shuffle(Random());
+    room!.turnPosition = 0;
+    room!.syncCurrentPlayerIndex();
+  }
+
+  OnlinePlayer? getOnlineActivePlayer() {
+    final id = room?.activePlayerId;
+    if (room == null || id == null) return null;
+    final index = room!.players.indexWhere((player) => player.id == id);
+    return index == -1 ? null : room!.players[index];
+  }
+
+  String onlineTurnOrderText() {
+    if (room == null || room!.turnOrder.isEmpty) return '';
+    return room!.turnOrder.map(playerNameById).join(' → ');
+  }
 
   @override
   void initState() {
     super.initState();
-    playerId = '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(999999)}';
+    playerId =
+        '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(999999)}';
     channel = Supabase.instance.client.channel(
       'number-battle:${widget.roomCode}',
       opts: const RealtimeChannelConfig(self: false, ack: true),
@@ -1798,30 +1941,30 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         .onBroadcast(event: 'next_round', callback: handleNextRound)
         .onBroadcast(event: 'state_request', callback: handleStateRequest)
         .subscribe((status, error) {
-      setState(() {
-        connectionStatus = status.name;
-      });
+          setState(() {
+            connectionStatus = status.name;
+          });
 
-      if (status == RealtimeSubscribeStatus.subscribed) {
-        if (isHost) {
-          room = OnlineRoomState(
-            phase: OnlinePhase.lobby,
-            playerCount: widget.playerCount,
-            players: [
-              OnlinePlayer(
-                id: playerId,
-                name: widget.playerName,
-                skillHand: drawSkillHand(Random()),
-              ),
-            ],
-          );
-          broadcastState();
-        } else {
-          send('join', {'id': playerId, 'name': widget.playerName});
-          send('state_request', {'id': playerId});
-        }
-      }
-    });
+          if (status == RealtimeSubscribeStatus.subscribed) {
+            if (isHost) {
+              room = OnlineRoomState(
+                phase: OnlinePhase.lobby,
+                playerCount: widget.playerCount,
+                players: [
+                  OnlinePlayer(
+                    id: playerId,
+                    name: widget.playerName,
+                    skillHand: drawSkillHand(Random()),
+                  ),
+                ],
+              );
+              broadcastState();
+            } else {
+              send('join', {'id': playerId, 'name': widget.playerName});
+              send('state_request', {'id': playerId});
+            }
+          }
+        });
   }
 
   @override
@@ -1841,11 +1984,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
     setState(() {
       room!.players.add(
-        OnlinePlayer(
-          id: id,
-          name: name,
-          skillHand: drawSkillHand(Random()),
-        ),
+        OnlinePlayer(id: id, name: name, skillHand: drawSkillHand(Random())),
       );
     });
     broadcastState();
@@ -1869,7 +2008,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     if (id == null || card == null) return;
 
     final playerIndex = room!.players.indexWhere((player) => player.id == id);
-    if (playerIndex != room!.currentPlayerIndex) return;
+    if (playerIndex == -1 || id != room!.activePlayerId) return;
 
     final player = room!.players[playerIndex];
     if (player.usedCards.contains(card)) return;
@@ -1878,8 +2017,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     player.usedCards.add(card);
     room!.currentPlays[player.id] = card;
 
-    if (room!.currentPlayerIndex < room!.players.length - 1) {
-      room!.currentPlayerIndex++;
+    if (room!.turnPosition < room!.turnOrder.length - 1) {
+      room!.turnPosition++;
+      room!.syncCurrentPlayerIndex();
     } else {
       finishOnlineRound();
     }
@@ -1896,10 +2036,12 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     if (id == null || type == null) return;
 
     final playerIndex = room!.players.indexWhere((player) => player.id == id);
-    if (playerIndex != room!.currentPlayerIndex) return;
+    if (playerIndex == -1 || id != room!.activePlayerId) return;
 
     final player = room!.players[playerIndex];
-    if (!player.skillHand.contains(type) || player.usedSkills.contains(type)) return;
+    if (!player.skillHand.contains(type) || player.usedSkills.contains(type)) {
+      return;
+    }
     if (room!.silencedPlayers.contains(id) && type != 'anchor') return;
 
     switch (type) {
@@ -1919,7 +2061,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         if (targetId == null || card == null) return;
         if (targetId == id || card < 1 || card > 9) return;
         if (room!.currentPlays.containsKey(targetId)) return;
-        final targetIndex = room!.players.indexWhere((item) => item.id == targetId);
+        final targetIndex = room!.players.indexWhere(
+          (item) => item.id == targetId,
+        );
         if (targetIndex == -1 ||
             room!.players[targetIndex].usedCards.contains(card) ||
             room!.players[targetIndex].anchorActive) {
@@ -1959,8 +2103,12 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         final targetId = payload['targetId'] as String?;
         if (targetId == null || targetId == id) return;
         if (room!.currentPlays.containsKey(targetId)) return;
-        final targetIndex = room!.players.indexWhere((item) => item.id == targetId);
-        if (targetIndex == -1 || room!.players[targetIndex].anchorActive) return;
+        final targetIndex = room!.players.indexWhere(
+          (item) => item.id == targetId,
+        );
+        if (targetIndex == -1 || room!.players[targetIndex].anchorActive) {
+          return;
+        }
         player.usedSkills.add(type);
         room!.silencedPlayers.add(targetId);
         break;
@@ -2034,7 +2182,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     setState(() {
       room!.phase = OnlinePhase.choosing;
       room!.round = 1;
-      room!.currentPlayerIndex = 0;
+      resetOnlineTurnOrder();
       room!.currentPlays.clear();
       room!.lockedCards.clear();
       room!.silencedPlayers.clear();
@@ -2049,8 +2197,12 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
   bool onlineSkillEnabled(String skillId) {
     final me = myIndex >= 0 ? room!.players[myIndex] : null;
     if (!isMyTurn || me == null) return false;
-    if (!me.skillHand.contains(skillId) || me.usedSkills.contains(skillId)) return false;
-    if (room!.silencedPlayers.contains(me.id) && skillId != 'anchor') return false;
+    if (!me.skillHand.contains(skillId) || me.usedSkills.contains(skillId)) {
+      return false;
+    }
+    if (room!.silencedPlayers.contains(me.id) && skillId != 'anchor') {
+      return false;
+    }
     return switch (skillId) {
       'revolution' => !room!.revolutionRound,
       'double' => !me.doubleActive,
@@ -2205,7 +2357,10 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
                 decoration: const InputDecoration(labelText: '锁定玩家'),
                 items: [
                   for (final player in targets)
-                    DropdownMenuItem(value: player.id, child: Text(player.name)),
+                    DropdownMenuItem(
+                      value: player.id,
+                      child: Text(player.name),
+                    ),
                 ],
                 onChanged: (value) {
                   if (value != null) setDialogState(() => targetId = value);
@@ -2341,7 +2496,10 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
                 decoration: const InputDecoration(labelText: '猜谁'),
                 items: [
                   for (final player in targets)
-                    DropdownMenuItem(value: player.id, child: Text(player.name)),
+                    DropdownMenuItem(
+                      value: player.id,
+                      child: Text(player.name),
+                    ),
                 ],
                 onChanged: (value) {
                   if (value != null) setDialogState(() => targetId = value);
@@ -2433,7 +2591,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
   }
 
   void showOnlineMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void submitSelectedCard() {
@@ -2452,7 +2612,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     final notes = <String>[];
     final effectivePlays = <String, int>{};
     for (final entry in currentRoom.currentPlays.entries) {
-      final player = currentRoom.players.firstWhere((item) => item.id == entry.key);
+      final player = currentRoom.players.firstWhere(
+        (item) => item.id == entry.key,
+      );
       final value = player.mirrorActive ? 10 - entry.value : entry.value;
       effectivePlays[entry.key] = value;
       if (player.mirrorActive) {
@@ -2460,7 +2622,10 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       }
     }
 
-    final rawPool = effectivePlays.values.fold<int>(0, (sum, card) => sum + card);
+    final rawPool = effectivePlays.values.fold<int>(
+      0,
+      (sum, card) => sum + card,
+    );
     final pool = max(0, rawPool + currentRoom.chaosDelta);
     if (currentRoom.chaosDelta != 0) {
       notes.add(
@@ -2496,8 +2661,11 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
     List<String> winnerIds;
     final lastWordCandidates = candidates
-        .where((id) =>
-            currentRoom.players.firstWhere((player) => player.id == id).lastWordActive)
+        .where(
+          (id) => currentRoom.players
+              .firstWhere((player) => player.id == id)
+              .lastWordActive,
+        )
         .toList();
     if (lastWordCandidates.isNotEmpty) {
       winnerIds = [lastWordCandidates.first];
@@ -2515,7 +2683,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
     final gain = pool / winnerIds.length;
     for (final winnerId in winnerIds) {
-      final winner = currentRoom.players.firstWhere((player) => player.id == winnerId);
+      final winner = currentRoom.players.firstWhere(
+        (player) => player.id == winnerId,
+      );
       final multiplier = winner.doubleActive ? 2 : 1;
       winner.score += gain * multiplier;
       if (multiplier == 2) {
@@ -2532,7 +2702,8 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
       if (player.snipeTargetId != null &&
           player.snipeNumber != null &&
-          currentRoom.currentPlays[player.snipeTargetId] == player.snipeNumber) {
+          currentRoom.currentPlays[player.snipeTargetId] ==
+              player.snipeNumber) {
         player.score += 5;
         notes.add('snipe：${player.name} +5');
       }
@@ -2547,7 +2718,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       if (!player.taxActive) continue;
       for (final winnerId in winnerIds) {
         if (winnerId == player.id) continue;
-        final winner = currentRoom.players.firstWhere((item) => item.id == winnerId);
+        final winner = currentRoom.players.firstWhere(
+          (item) => item.id == winnerId,
+        );
         winner.score -= 2;
         player.score += 2;
         notes.add('tax：${player.name} 从 ${winner.name} 拿 2 分');
@@ -2566,7 +2739,8 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         }
       }
       player.doubleActive = false;
-      if (player.loanDebtRounds > 0 && player.loanStartRound < currentRoom.round) {
+      if (player.loanDebtRounds > 0 &&
+          player.loanStartRound < currentRoom.round) {
         player.score -= 2;
         player.loanDebtRounds--;
         notes.add('loan：${player.name} -2');
@@ -2577,7 +2751,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       notes.add('连输补偿：${compensation.join('、')}');
     }
 
-    currentRoom.lastSingleWinnerId = winnerIds.length == 1 ? winnerIds.first : null;
+    currentRoom.lastSingleWinnerId = winnerIds.length == 1
+        ? winnerIds.first
+        : null;
     currentRoom.latestResult = OnlineRoundResult(
       round: currentRoom.round,
       plays: Map<String, int>.from(currentRoom.currentPlays),
@@ -2590,8 +2766,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     currentRoom.lockedCards.clear();
     currentRoom.silencedPlayers.clear();
     currentRoom.chaosDelta = 0;
-    currentRoom.phase =
-        currentRoom.round == 9 ? OnlinePhase.finished : OnlinePhase.reveal;
+    currentRoom.phase = currentRoom.round == 9
+        ? OnlinePhase.finished
+        : OnlinePhase.reveal;
   }
 
   void clearOnlineRoundSkills(OnlinePlayer player) {
@@ -2609,7 +2786,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
   void startNextOnlineRound() {
     setState(() {
       room!.round++;
-      room!.currentPlayerIndex = 0;
+      resetOnlineTurnOrder();
       room!.phase = OnlinePhase.choosing;
       room!.revolutionRound = false;
       room!.lockedCards.clear();
@@ -2655,19 +2832,24 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         const SizedBox(height: 8),
         Text('连接状态：$connectionStatus'),
         const SizedBox(height: 18),
-        Text('玩家 ${room!.players.length} / ${room!.playerCount}',
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        Text(
+          '玩家 ${room!.players.length} / ${room!.playerCount}',
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
         const SizedBox(height: 8),
         for (final player in room!.players)
           ListTile(
-            leading: Icon(player.id == playerId ? Icons.person_pin : Icons.person),
+            leading: Icon(
+              player.id == playerId ? Icons.person_pin : Icons.person,
+            ),
             title: Text(player.name),
           ),
         const SizedBox(height: 18),
         if (isHost)
           FilledButton(
-            onPressed:
-                room!.players.length == room!.playerCount ? startOnlineGame : null,
+            onPressed: room!.players.length == room!.playerCount
+                ? startOnlineGame
+                : null,
             child: const Padding(
               padding: EdgeInsets.all(14),
               child: Text('开始线上游戏', style: TextStyle(fontSize: 18)),
@@ -2680,17 +2862,24 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
   }
 
   Widget buildOnlineChoosing() {
-    final activePlayer = room!.players[room!.currentPlayerIndex];
+    final activePlayer = getOnlineActivePlayer();
     final me = myIndex >= 0 ? room!.players[myIndex] : null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('第 ${room!.round} / 9 轮',
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        Text(
+          '第 ${room!.round} / 9 轮',
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+        ),
         const SizedBox(height: 8),
         Text(
-          isMyTurn ? '轮到你出牌' : '等待 ${activePlayer.name} 出牌',
+          '本轮顺序：${onlineTurnOrderText()}',
+          style: const TextStyle(fontSize: 15, color: Color(0xFF55524A)),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          isMyTurn ? '轮到你出牌' : '等待 ${activePlayer?.name ?? '下一位玩家'} 出牌',
           style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 10),
@@ -2731,9 +2920,13 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
                         : const Color(0xFF2E7D6F),
                     disabledBackgroundColor: Colors.black12,
                   ),
-                  child: Text('$card',
-                      style: const TextStyle(
-                          fontSize: 28, fontWeight: FontWeight.bold)),
+                  child: Text(
+                    '$card',
+                    style: const TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               );
             }),
@@ -2742,7 +2935,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         Expanded(
           child: ListView(
             children: [
-              buildCardMemoryBoard(onlineCardMemoryLines(includeCurrentRound: false)),
+              buildCardMemoryBoard(
+                onlineCardMemoryLines(includeCurrentRound: false),
+              ),
               const SizedBox(height: 12),
               buildScoreBoard(
                 room!.players.map((p) => ScoreLine(p.name, p.score)).toList(),
@@ -2754,7 +2949,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         SizedBox(
           width: double.infinity,
           child: FilledButton(
-            onPressed: isMyTurn && selectedCard != null ? submitSelectedCard : null,
+            onPressed: isMyTurn && selectedCard != null
+                ? submitSelectedCard
+                : null,
             child: const Padding(
               padding: EdgeInsets.all(14),
               child: Text('提交出牌', style: TextStyle(fontSize: 18)),
@@ -2767,7 +2964,8 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
   Widget buildOnlineReveal(bool finished) {
     final result = room!.latestResult!;
-    final sorted = [...room!.players]..sort((a, b) => b.score.compareTo(a.score));
+    final sorted = [...room!.players]
+      ..sort((a, b) => b.score.compareTo(a.score));
     final topScore = sorted.first.score;
 
     return ListView(
@@ -2785,18 +2983,25 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
                 for (final player in room!.players)
                   ListTile(
                     title: Text(player.name),
-                    trailing: Text('${result.plays[player.id]}',
-                        style: const TextStyle(fontSize: 24)),
+                    trailing: Text(
+                      '${result.plays[player.id]}',
+                      style: const TextStyle(fontSize: 24),
+                    ),
                   ),
                 const Divider(),
-                Text('本轮分数池：${result.pool}',
-                    style: const TextStyle(fontSize: 18)),
+                Text(
+                  '本轮分数池：${result.pool}',
+                  style: const TextStyle(fontSize: 18),
+                ),
                 const SizedBox(height: 8),
                 Text(result.reason, textAlign: TextAlign.center),
                 const SizedBox(height: 8),
                 Text(
                   '获胜：${result.winnerIds.map(playerNameById).join('、')}',
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ],
             ),
@@ -2810,15 +3015,21 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         buildCardMemoryBoard(onlineCardMemoryLines(includeCurrentRound: true)),
         if (finished) ...[
           const SizedBox(height: 18),
-          const Text('最终排名',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+          const Text(
+            '最终排名',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 8),
           for (final player in sorted)
             ListTile(
-              leading: Icon(player.score == topScore ? Icons.emoji_events : Icons.person),
+              leading: Icon(
+                player.score == topScore ? Icons.emoji_events : Icons.person,
+              ),
               title: Text(player.name),
-              trailing: Text(formatScore(player.score),
-                  style: const TextStyle(fontSize: 18)),
+              trailing: Text(
+                formatScore(player.score),
+                style: const TextStyle(fontSize: 18),
+              ),
             ),
         ] else ...[
           const SizedBox(height: 18),
@@ -2837,15 +3048,20 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     return room!.players.firstWhere((player) => player.id == id).name;
   }
 
-  List<CardMemoryLine> onlineCardMemoryLines({required bool includeCurrentRound}) {
+  List<CardMemoryLine> onlineCardMemoryLines({
+    required bool includeCurrentRound,
+  }) {
     return [
       for (final player in room!.players)
         CardMemoryLine(
           player.name,
           (player.usedCards
-                .where((card) =>
-                    includeCurrentRound || room!.currentPlays[player.id] != card)
-                .toList()
+              .where(
+                (card) =>
+                    includeCurrentRound ||
+                    room!.currentPlays[player.id] != card,
+              )
+              .toList()
             ..sort()),
         ),
     ];
@@ -2882,6 +3098,8 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 String makeRoomCode() {
   const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   final random = Random();
-  return List.generate(5, (_) => letters[random.nextInt(letters.length)]).join();
+  return List.generate(
+    5,
+    (_) => letters[random.nextInt(letters.length)],
+  ).join();
 }
-
