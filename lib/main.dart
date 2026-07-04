@@ -26,7 +26,6 @@ const skillDeck = [
   'insurance',
   'silence',
   'chaos',
-  'snipe',
   'anchor',
   'loan',
   'last_word',
@@ -54,7 +53,7 @@ const skillDefinitions = {
     id: 'lock',
     name: 'lock',
     description: '禁别人一个数字',
-    detail: '选择一个还没出牌的对手，并禁止他本轮打出一个指定数字。已经出过牌的人不能被锁，开了 anchor 的人也不能被锁。',
+    detail: '选择一个还没出牌的对手，并禁止他本轮打出一个指定数字。已经出过牌的人不能被锁，开了 anchor 的人也不能被锁；第9轮不能使用。',
     icon: Icons.block,
   ),
   'peek': SkillDefinition(
@@ -735,7 +734,7 @@ class _GamePageState extends State<GamePage> {
     return switch (skillId) {
       'revolution' => !revolutionRound,
       'double' => !player.doubleActive,
-      'lock' => true,
+      'lock' => round < 9,
       'peek' => currentPlays.isNotEmpty,
       'ambush' => round < 9,
       'mirror' => !player.mirrorActive,
@@ -2599,7 +2598,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     return switch (skillId) {
       'revolution' => !room!.revolutionRound,
       'double' => !me.doubleActive,
-      'lock' => true,
+      'lock' => room!.round < 9,
       'peek' => room!.currentPlays.isNotEmpty,
       'ambush' => room!.round < 9,
       'mirror' => !me.mirrorActive,
