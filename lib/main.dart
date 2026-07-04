@@ -32,7 +32,7 @@ const skillDeck = [
   'last_word',
 ];
 
-const skillsThatNeedLaterPlayers = {'lock', 'silence'};
+const skillsThatNeedLaterPlayers = {'lock'};
 const skillsThatNeedEarlierPlayers = {'peek'};
 
 const skillDefinitions = {
@@ -67,8 +67,8 @@ const skillDefinitions = {
   'ambush': SkillDefinition(
     id: 'ambush',
     name: 'ambush',
-    description: '猜中数字 +3',
-    detail: '先猜一个 1 到 9 的数字。结算时只要本轮有人出过这个数字，你额外 +3 分，不要求你赢本轮。',
+    description: '越早猜中加分越多',
+    detail: '先猜一个 1 到 9 的数字。结算时只要本轮有人出过这个数字，你额外得分：第1轮+9、第2轮+8，之后逐轮递减；第9轮不能使用。',
     icon: Icons.radar,
   ),
   'mirror': SkillDefinition(
@@ -95,8 +95,8 @@ const skillDefinitions = {
   'silence': SkillDefinition(
     id: 'silence',
     name: 'silence',
-    description: '禁别人本轮技能',
-    detail: '选择一个还没出牌的对手，让他本轮不能再使用技能。已经出过牌的人不能被禁技，开了 anchor 的人免疫。',
+    description: '禁用别人本轮技能',
+    detail: '选择一个对手，让他本轮不能再使用技能，并让他本轮已经启动的技能效果失效。开了 anchor 的人免疫。',
     icon: Icons.volume_off,
   ),
   'chaos': SkillDefinition(
@@ -160,6 +160,10 @@ List<String> drawSkillHand(Random random) {
 
 bool hasAnySkill(List<String> hand, Set<String> skillIds) {
   return hand.any(skillIds.contains);
+}
+
+int ambushBonusForRound(int round) {
+  return max(0, 10 - round);
 }
 
 List<int> makeFairTurnOrder({
@@ -301,6 +305,7 @@ class Player {
   bool anchorActive = false;
   bool lastWordActive = false;
   int? ambushNumber;
+  int ambushBonus = 0;
   int? snipeTargetIndex;
   int? snipeNumber;
   int loanDebtRounds = 0;
@@ -325,6 +330,7 @@ class Player {
     anchorActive = false;
     lastWordActive = false;
     ambushNumber = null;
+    ambushBonus = 0;
     snipeTargetIndex = null;
     snipeNumber = null;
     loanDebtRounds = 0;
@@ -369,8 +375,12 @@ class _GamePageState extends State<GamePage> {
   int? selectedCard;
   int? lastSingleWinner;
   bool revolutionRound = false;
+  int? revolutionOwner;
   final Map<int, int> currentLocks = {};
+  final Map<int, int> currentLockOwners = {};
   final Set<int> currentSilenced = {};
+  final Map<int, int> currentSilenceOwners = {};
+  final Map<int, int> currentChaosDeltas = {};
   int currentChaosDelta = 0;
 
   final nameControllers = List.generate(
@@ -422,8 +432,12 @@ class _GamePageState extends State<GamePage> {
       selectedCard = null;
       lastSingleWinner = null;
       revolutionRound = false;
+      revolutionOwner = null;
       currentLocks.clear();
+      currentLockOwners.clear();
       currentSilenced.clear();
+      currentSilenceOwners.clear();
+      currentChaosDeltas.clear();
       currentChaosDelta = 0;
       currentPlays.clear();
       history.clear();
@@ -528,8 +542,8 @@ class _GamePageState extends State<GamePage> {
       final player = players[i];
       if (player.ambushNumber != null &&
           currentPlays.values.contains(player.ambushNumber)) {
-        player.score += 3;
-        notes.add('ambush：${player.name} +3');
+        player.score += player.ambushBonus;
+        notes.add('ambush：${player.name} +${player.ambushBonus}');
       }
 
       if (player.snipeTargetIndex != null &&
@@ -602,8 +616,46 @@ class _GamePageState extends State<GamePage> {
     player.anchorActive = false;
     player.lastWordActive = false;
     player.ambushNumber = null;
+    player.ambushBonus = 0;
     player.snipeTargetIndex = null;
     player.snipeNumber = null;
+  }
+
+  void silenceLocalPlayer(int targetIndex) {
+    final target = players[targetIndex];
+
+    if (revolutionOwner == targetIndex) {
+      revolutionRound = false;
+      revolutionOwner = null;
+    }
+
+    currentLocks.removeWhere(
+      (lockedPlayer, _) => currentLockOwners[lockedPlayer] == targetIndex,
+    );
+    currentLockOwners.removeWhere((_, owner) => owner == targetIndex);
+
+    currentSilenced.removeWhere(
+      (silencedPlayer) => currentSilenceOwners[silencedPlayer] == targetIndex,
+    );
+    currentSilenceOwners.removeWhere((_, owner) => owner == targetIndex);
+
+    currentChaosDeltas.remove(targetIndex);
+    currentChaosDelta = currentChaosDeltas.values.fold<int>(
+      0,
+      (sum, value) => sum + value,
+    );
+
+    if (target.usedSkills.contains('loan') &&
+        target.loanStartRound == round &&
+        target.loanDebtRounds == 3) {
+      target.score -= 6;
+      target.loanDebtRounds = 0;
+      target.loanStartRound = 0;
+    }
+
+    clearLocalRoundSkills(target);
+    currentSilenced.add(targetIndex);
+    currentSilenceOwners[targetIndex] = currentPlayer;
   }
 
   void nextRound() {
@@ -612,8 +664,12 @@ class _GamePageState extends State<GamePage> {
       resetLocalTurnOrder();
       selectedCard = null;
       revolutionRound = false;
+      revolutionOwner = null;
       currentLocks.clear();
+      currentLockOwners.clear();
       currentSilenced.clear();
+      currentSilenceOwners.clear();
+      currentChaosDeltas.clear();
       currentChaosDelta = 0;
       phase = Phase.choosing;
     });
@@ -632,8 +688,12 @@ class _GamePageState extends State<GamePage> {
       selectedCard = null;
       lastSingleWinner = null;
       revolutionRound = false;
+      revolutionOwner = null;
       currentLocks.clear();
+      currentLockOwners.clear();
       currentSilenced.clear();
+      currentSilenceOwners.clear();
+      currentChaosDeltas.clear();
       currentChaosDelta = 0;
     });
   }
@@ -650,8 +710,12 @@ class _GamePageState extends State<GamePage> {
       selectedCard = null;
       lastSingleWinner = null;
       revolutionRound = false;
+      revolutionOwner = null;
       currentLocks.clear();
+      currentLockOwners.clear();
       currentSilenced.clear();
+      currentSilenceOwners.clear();
+      currentChaosDeltas.clear();
       currentChaosDelta = 0;
       currentPlays.clear();
       history.clear();
@@ -673,7 +737,7 @@ class _GamePageState extends State<GamePage> {
       'double' => !player.doubleActive,
       'lock' => true,
       'peek' => currentPlays.isNotEmpty,
-      'ambush' => true,
+      'ambush' => round < 9,
       'mirror' => !player.mirrorActive,
       'tax' => !player.taxActive,
       'insurance' => !player.insuranceActive,
@@ -719,6 +783,7 @@ class _GamePageState extends State<GamePage> {
         setState(() {
           markLocalSkillUsed(player, skillId);
           revolutionRound = true;
+          revolutionOwner = currentPlayer;
         });
         break;
       case 'double':
@@ -760,7 +825,13 @@ class _GamePageState extends State<GamePage> {
       case 'chaos':
         setState(() {
           markLocalSkillUsed(player, skillId);
-          currentChaosDelta += Random().nextBool() ? 3 : -3;
+          final delta = Random().nextBool() ? 3 : -3;
+          currentChaosDeltas[currentPlayer] =
+              (currentChaosDeltas[currentPlayer] ?? 0) + delta;
+          currentChaosDelta = currentChaosDeltas.values.fold<int>(
+            0,
+            (sum, value) => sum + value,
+          );
         });
         break;
       case 'snipe':
@@ -771,7 +842,9 @@ class _GamePageState extends State<GamePage> {
           markLocalSkillUsed(player, skillId);
           player.anchorActive = true;
           currentLocks.remove(currentPlayer);
+          currentLockOwners.remove(currentPlayer);
           currentSilenced.remove(currentPlayer);
+          currentSilenceOwners.remove(currentPlayer);
         });
         break;
       case 'loan':
@@ -862,6 +935,7 @@ class _GamePageState extends State<GamePage> {
     setState(() {
       markLocalSkillUsed(player, 'lock');
       currentLocks[result.$1] = result.$2;
+      currentLockOwners[result.$1] = currentPlayer;
     });
   }
 
@@ -916,6 +990,7 @@ class _GamePageState extends State<GamePage> {
     setState(() {
       markLocalSkillUsed(player, 'ambush');
       player.ambushNumber = number;
+      player.ambushBonus = ambushBonusForRound(round);
     });
   }
 
@@ -945,10 +1020,7 @@ class _GamePageState extends State<GamePage> {
     final player = players[currentPlayer];
     final targets = [
       for (int i = 0; i < players.length; i++)
-        if (i != currentPlayer &&
-            !currentPlays.containsKey(i) &&
-            !players[i].anchorActive)
-          i,
+        if (i != currentPlayer && !players[i].anchorActive) i,
     ];
     if (targets.isEmpty) {
       showMessage('没有可以禁技的玩家');
@@ -992,7 +1064,7 @@ class _GamePageState extends State<GamePage> {
     if (result == null) return;
     setState(() {
       markLocalSkillUsed(player, 'silence');
-      currentSilenced.add(result);
+      silenceLocalPlayer(result);
     });
   }
 
@@ -1367,7 +1439,8 @@ class _GamePageState extends State<GamePage> {
       if (player.insuranceActive) 'insurance：没赢 +3',
       if (player.anchorActive) 'anchor：本轮免疫干扰',
       if (player.lastWordActive) 'last word：并列优先',
-      if (player.ambushNumber != null) 'ambush：猜 ${player.ambushNumber}',
+      if (player.ambushNumber != null)
+        'ambush：猜 ${player.ambushNumber}，中了 +${player.ambushBonus}',
       if (player.snipeTargetIndex != null && player.snipeNumber != null)
         'snipe：猜 ${players[player.snipeTargetIndex!].name} 出 ${player.snipeNumber}',
       if (currentChaosDelta != 0)
@@ -1713,6 +1786,7 @@ class OnlinePlayer {
     this.anchorActive = false,
     this.lastWordActive = false,
     this.ambushNumber,
+    this.ambushBonus = 0,
     this.snipeTargetId,
     this.snipeNumber,
     this.loanDebtRounds = 0,
@@ -1735,6 +1809,7 @@ class OnlinePlayer {
   bool anchorActive;
   bool lastWordActive;
   int? ambushNumber;
+  int ambushBonus;
   String? snipeTargetId;
   int? snipeNumber;
   int loanDebtRounds;
@@ -1759,6 +1834,7 @@ class OnlinePlayer {
     anchorActive = false;
     lastWordActive = false;
     ambushNumber = null;
+    ambushBonus = 0;
     snipeTargetId = null;
     snipeNumber = null;
     loanDebtRounds = 0;
@@ -1780,6 +1856,7 @@ class OnlinePlayer {
     'anchorActive': anchorActive,
     'lastWordActive': lastWordActive,
     'ambushNumber': ambushNumber,
+    'ambushBonus': ambushBonus,
     'snipeTargetId': snipeTargetId,
     'snipeNumber': snipeNumber,
     'loanDebtRounds': loanDebtRounds,
@@ -1804,6 +1881,7 @@ class OnlinePlayer {
       anchorActive: (json['anchorActive'] as bool?) ?? false,
       lastWordActive: (json['lastWordActive'] as bool?) ?? false,
       ambushNumber: json['ambushNumber'] as int?,
+      ambushBonus: (json['ambushBonus'] as int?) ?? 0,
       snipeTargetId: json['snipeTargetId'] as String?,
       snipeNumber: json['snipeNumber'] as int?,
       loanDebtRounds: (json['loanDebtRounds'] as int?) ?? 0,
@@ -1865,14 +1943,21 @@ class OnlineRoomState {
     this.turnPosition = 0,
     this.lastSingleWinnerId,
     this.revolutionRound = false,
+    this.revolutionOwnerId,
     Map<String, int>? currentPlays,
     Map<String, int>? lockedCards,
+    Map<String, String>? lockOwners,
     Set<String>? silencedPlayers,
+    Map<String, String>? silenceOwners,
+    Map<String, int>? chaosDeltas,
     this.chaosDelta = 0,
     this.latestResult,
   }) : currentPlays = currentPlays ?? {},
        lockedCards = lockedCards ?? {},
+       lockOwners = lockOwners ?? {},
        silencedPlayers = silencedPlayers ?? {},
+       silenceOwners = silenceOwners ?? {},
+       chaosDeltas = chaosDeltas ?? {},
        turnOrder = turnOrder ?? players.map((player) => player.id).toList();
 
   OnlinePhase phase;
@@ -1883,10 +1968,14 @@ class OnlineRoomState {
   int turnPosition;
   String? lastSingleWinnerId;
   bool revolutionRound;
+  String? revolutionOwnerId;
   List<OnlinePlayer> players;
   Map<String, int> currentPlays;
   Map<String, int> lockedCards;
+  Map<String, String> lockOwners;
   Set<String> silencedPlayers;
+  Map<String, String> silenceOwners;
+  Map<String, int> chaosDeltas;
   int chaosDelta;
   OnlineRoundResult? latestResult;
 
@@ -1913,10 +2002,14 @@ class OnlineRoomState {
     'turnPosition': turnPosition,
     'lastSingleWinnerId': lastSingleWinnerId,
     'revolutionRound': revolutionRound,
+    'revolutionOwnerId': revolutionOwnerId,
     'players': players.map((player) => player.toJson()).toList(),
     'currentPlays': currentPlays,
     'lockedCards': lockedCards,
+    'lockOwners': lockOwners,
     'silencedPlayers': silencedPlayers.toList(),
+    'silenceOwners': silenceOwners,
+    'chaosDeltas': chaosDeltas,
     'chaosDelta': chaosDelta,
     'latestResult': latestResult?.toJson(),
   };
@@ -1951,12 +2044,18 @@ class OnlineRoomState {
       turnPosition: turnPosition,
       lastSingleWinnerId: json['lastSingleWinnerId'] as String?,
       revolutionRound: (json['revolutionRound'] as bool?) ?? false,
+      revolutionOwnerId: json['revolutionOwnerId'] as String?,
       players: players,
       currentPlays: Map<String, int>.from(json['currentPlays'] as Map),
       lockedCards: Map<String, int>.from((json['lockedCards'] as Map?) ?? {}),
+      lockOwners: Map<String, String>.from((json['lockOwners'] as Map?) ?? {}),
       silencedPlayers: List<String>.from(
         (json['silencedPlayers'] as List?) ?? const [],
       ).toSet(),
+      silenceOwners: Map<String, String>.from(
+        (json['silenceOwners'] as Map?) ?? {},
+      ),
+      chaosDeltas: Map<String, int>.from((json['chaosDeltas'] as Map?) ?? {}),
       chaosDelta: (json['chaosDelta'] as int?) ?? 0,
       latestResult: json['latestResult'] == null
           ? null
@@ -2286,6 +2385,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         if (room!.revolutionRound) return;
         player.usedSkills.add(type);
         room!.revolutionRound = true;
+        room!.revolutionOwnerId = id;
         break;
       case 'double':
         if (player.doubleActive) return;
@@ -2308,6 +2408,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         }
         player.usedSkills.add(type);
         room!.lockedCards[targetId] = card;
+        room!.lockOwners[targetId] = id;
         break;
       case 'peek':
         final targetId = payload['targetId'] as String?;
@@ -2317,9 +2418,11 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         break;
       case 'ambush':
         final number = payload['number'] as int?;
+        if (room!.round >= 9) return;
         if (number == null || number < 1 || number > 9) return;
         player.usedSkills.add(type);
         player.ambushNumber = number;
+        player.ambushBonus = ambushBonusForRound(room!.round);
         break;
       case 'mirror':
         if (player.mirrorActive) return;
@@ -2339,7 +2442,6 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       case 'silence':
         final targetId = payload['targetId'] as String?;
         if (targetId == null || targetId == id) return;
-        if (room!.currentPlays.containsKey(targetId)) return;
         final targetIndex = room!.players.indexWhere(
           (item) => item.id == targetId,
         );
@@ -2347,13 +2449,17 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
           return;
         }
         player.usedSkills.add(type);
-        room!.silencedPlayers.add(targetId);
+        silenceOnlinePlayer(targetId: targetId, sourceId: id);
         break;
       case 'chaos':
         final delta = payload['delta'] as int?;
         if (delta != 3 && delta != -3) return;
         player.usedSkills.add(type);
-        room!.chaosDelta += delta!;
+        room!.chaosDeltas[id] = (room!.chaosDeltas[id] ?? 0) + delta!;
+        room!.chaosDelta = room!.chaosDeltas.values.fold<int>(
+          0,
+          (sum, value) => sum + value,
+        );
         break;
       case 'snipe':
         final targetId = payload['targetId'] as String?;
@@ -2370,7 +2476,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         player.usedSkills.add(type);
         player.anchorActive = true;
         room!.lockedCards.remove(id);
+        room!.lockOwners.remove(id);
         room!.silencedPlayers.remove(id);
+        room!.silenceOwners.remove(id);
         break;
       case 'loan':
         if (player.loanDebtRounds > 0) return;
@@ -2390,6 +2498,46 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
     setState(() {});
     broadcastState();
+  }
+
+  void silenceOnlinePlayer({
+    required String targetId,
+    required String sourceId,
+  }) {
+    final target = room!.players.firstWhere((player) => player.id == targetId);
+
+    if (room!.revolutionOwnerId == targetId) {
+      room!.revolutionRound = false;
+      room!.revolutionOwnerId = null;
+    }
+
+    room!.lockedCards.removeWhere(
+      (lockedPlayer, _) => room!.lockOwners[lockedPlayer] == targetId,
+    );
+    room!.lockOwners.removeWhere((_, owner) => owner == targetId);
+
+    room!.silencedPlayers.removeWhere(
+      (silencedPlayer) => room!.silenceOwners[silencedPlayer] == targetId,
+    );
+    room!.silenceOwners.removeWhere((_, owner) => owner == targetId);
+
+    room!.chaosDeltas.remove(targetId);
+    room!.chaosDelta = room!.chaosDeltas.values.fold<int>(
+      0,
+      (sum, value) => sum + value,
+    );
+
+    if (target.usedSkills.contains('loan') &&
+        target.loanStartRound == room!.round &&
+        target.loanDebtRounds == 3) {
+      target.score -= 6;
+      target.loanDebtRounds = 0;
+      target.loanStartRound = 0;
+    }
+
+    clearOnlineRoundSkills(target);
+    room!.silencedPlayers.add(targetId);
+    room!.silenceOwners[targetId] = sourceId;
   }
 
   void handleNextRound(Map<String, dynamic> payload) {
@@ -2426,11 +2574,15 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       resetOnlineTurnOrder();
       room!.currentPlays.clear();
       room!.lockedCards.clear();
+      room!.lockOwners.clear();
       room!.silencedPlayers.clear();
+      room!.silenceOwners.clear();
+      room!.chaosDeltas.clear();
       room!.chaosDelta = 0;
       room!.latestResult = null;
       room!.lastSingleWinnerId = null;
       room!.revolutionRound = false;
+      room!.revolutionOwnerId = null;
     });
     broadcastState();
   }
@@ -2449,7 +2601,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       'double' => !me.doubleActive,
       'lock' => true,
       'peek' => room!.currentPlays.isNotEmpty,
-      'ambush' => true,
+      'ambush' => room!.round < 9,
       'mirror' => !me.mirrorActive,
       'tax' => !me.taxActive,
       'insurance' => !me.insuranceActive,
@@ -2786,10 +2938,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
   Future<void> activateOnlineSilence() async {
     final targets = [
       for (final player in room!.players)
-        if (player.id != playerId &&
-            !room!.currentPlays.containsKey(player.id) &&
-            !player.anchorActive)
-          player,
+        if (player.id != playerId && !player.anchorActive) player,
     ];
     if (targets.isEmpty) {
       showOnlineMessage('没有可以禁技的玩家');
@@ -2937,8 +3086,8 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     for (final player in currentRoom.players) {
       if (player.ambushNumber != null &&
           currentRoom.currentPlays.values.contains(player.ambushNumber)) {
-        player.score += 3;
-        notes.add('ambush：${player.name} +3');
+        player.score += player.ambushBonus;
+        notes.add('ambush：${player.name} +${player.ambushBonus}');
       }
 
       if (player.snipeTargetId != null &&
@@ -3005,7 +3154,10 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     );
     currentRoom.currentPlays.clear();
     currentRoom.lockedCards.clear();
+    currentRoom.lockOwners.clear();
     currentRoom.silencedPlayers.clear();
+    currentRoom.silenceOwners.clear();
+    currentRoom.chaosDeltas.clear();
     currentRoom.chaosDelta = 0;
     currentRoom.phase = currentRoom.round == 9
         ? OnlinePhase.finished
@@ -3020,6 +3172,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     player.anchorActive = false;
     player.lastWordActive = false;
     player.ambushNumber = null;
+    player.ambushBonus = 0;
     player.snipeTargetId = null;
     player.snipeNumber = null;
   }
@@ -3030,8 +3183,12 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       resetOnlineTurnOrder();
       room!.phase = OnlinePhase.choosing;
       room!.revolutionRound = false;
+      room!.revolutionOwnerId = null;
       room!.lockedCards.clear();
+      room!.lockOwners.clear();
       room!.silencedPlayers.clear();
+      room!.silenceOwners.clear();
+      room!.chaosDeltas.clear();
       room!.chaosDelta = 0;
       selectedCard = null;
     });
@@ -3332,7 +3489,8 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       if (player.insuranceActive) 'insurance：没赢 +3',
       if (player.anchorActive) 'anchor：本轮免疫干扰',
       if (player.lastWordActive) 'last word：并列优先',
-      if (player.ambushNumber != null) 'ambush：猜 ${player.ambushNumber}',
+      if (player.ambushNumber != null)
+        'ambush：猜 ${player.ambushNumber}，中了 +${player.ambushBonus}',
       if (player.snipeTargetId != null && player.snipeNumber != null)
         'snipe：猜 ${playerNameById(player.snipeTargetId!)} 出 ${player.snipeNumber}',
       if (room!.chaosDelta != 0)
