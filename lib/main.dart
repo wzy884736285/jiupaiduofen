@@ -108,7 +108,7 @@ const skillDefinitions = {
   'loan': SkillDefinition(
     id: 'loan',
     name: 'loan',
-    description: '立刻 +6，后扣',
+    description: '立刻 +6，之后3轮各扣2',
     icon: Icons.payments,
   ),
   'last_word': SkillDefinition(
@@ -1050,6 +1050,8 @@ class _GamePageState extends State<GamePage> {
             child: Text('开始游戏', style: TextStyle(fontSize: 18)),
           ),
         ),
+        const SizedBox(height: 18),
+        buildSkillCatalogPanel(),
       ],
     );
   }
@@ -1306,9 +1308,21 @@ Widget buildSkillHandPanel({
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '技能牌',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          Row(
+            children: [
+              const Text(
+                '技能牌',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              Builder(
+                builder: (context) => TextButton.icon(
+                  onPressed: () => showSkillCatalogDialog(context),
+                  icon: const Icon(Icons.help_outline, size: 18),
+                  label: const Text('全部技能'),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           Wrap(
@@ -1384,7 +1398,8 @@ Widget buildSkillButton({
           const SizedBox(height: 3),
           Text(
             description,
-            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
+            overflow: TextOverflow.fade,
             style: TextStyle(
               fontSize: 12,
               color: textColor.withValues(alpha: 0.75),
@@ -1393,6 +1408,80 @@ Widget buildSkillButton({
         ],
       ),
     ),
+  );
+}
+
+Future<void> showSkillCatalogDialog(BuildContext context) {
+  return showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('全部技能'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(child: buildSkillCatalogList()),
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('知道了'),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget buildSkillCatalogPanel() {
+  return Card(
+    child: ExpansionTile(
+      initiallyExpanded: true,
+      leading: const Icon(Icons.style),
+      title: const Text(
+        '全部技能',
+        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+      ),
+      childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      children: [buildSkillCatalogList()],
+    ),
+  );
+}
+
+Widget buildSkillCatalogList() {
+  return Column(
+    children: [
+      for (final skillId in skillDeck)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                skillDefinitions[skillId]!.icon,
+                size: 20,
+                color: const Color(0xFF2E7D6F),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      skillDefinitions[skillId]!.name,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    Text(
+                      skillDefinitions[skillId]!.description,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+    ],
   );
 }
 
@@ -2857,6 +2946,8 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
           )
         else
           const Text('等待房主开始游戏', style: TextStyle(fontSize: 18)),
+        const SizedBox(height: 18),
+        buildSkillCatalogPanel(),
       ],
     );
   }
