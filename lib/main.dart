@@ -376,8 +376,18 @@ class _GamePageState extends State<GamePage> {
             );
           }),
         ),
-        const Spacer(),
-        buildScoreBoard(players.map((p) => ScoreLine(p.name, p.score)).toList()),
+        const SizedBox(height: 16),
+        Expanded(
+          child: ListView(
+            children: [
+              buildCardMemoryBoard(localCardMemoryLines()),
+              const SizedBox(height: 12),
+              buildScoreBoard(
+                players.map((p) => ScoreLine(p.name, p.score)).toList(),
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,
@@ -432,6 +442,8 @@ class _GamePageState extends State<GamePage> {
         ),
         const SizedBox(height: 12),
         buildScoreBoard(players.map((p) => ScoreLine(p.name, p.score)).toList()),
+        const SizedBox(height: 12),
+        buildCardMemoryBoard(localCardMemoryLines()),
         if (finished) ...[
           const SizedBox(height: 18),
           const Text('最终排名',
@@ -453,6 +465,17 @@ class _GamePageState extends State<GamePage> {
       ],
     );
   }
+
+  List<CardMemoryLine> localCardMemoryLines() {
+    return List.generate(players.length, (playerIndex) {
+      final cards = <int>[
+        for (final result in history)
+          if (result.plays[playerIndex] != null) result.plays[playerIndex]!,
+      ]..sort();
+
+      return CardMemoryLine(players[playerIndex].name, cards);
+    });
+  }
 }
 
 class ScoreLine {
@@ -460,6 +483,13 @@ class ScoreLine {
 
   final String name;
   final double score;
+}
+
+class CardMemoryLine {
+  const CardMemoryLine(this.name, this.cards);
+
+  final String name;
+  final List<int> cards;
 }
 
 Widget buildScoreBoard(List<ScoreLine> scores) {
@@ -478,6 +508,67 @@ Widget buildScoreBoard(List<ScoreLine> scores) {
                 Flexible(child: Text(score.name)),
                 Text(formatScore(score.score)),
               ],
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget buildCardMemoryBoard(List<CardMemoryLine> lines) {
+  return Card(
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('记牌器',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          for (final line in lines)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 86,
+                    child: Text(
+                      line.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  Expanded(
+                    child: line.cards.isEmpty
+                        ? const Text('还没有公开出牌',
+                            style: TextStyle(color: Colors.black54))
+                        : Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              for (final card in line.cards)
+                                Container(
+                                  width: 30,
+                                  height: 30,
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE09F3E),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    '$card',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                  ),
+                ],
+              ),
             ),
         ],
       ),
@@ -1051,7 +1142,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         Text(
           isMyTurn ? '轮到你出牌' : '等待 ${activePlayer.name} 出牌',
           style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-        ),
+          ),
         const SizedBox(height: 18),
         if (me != null)
           Wrap(
@@ -1081,9 +1172,17 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
               );
             }),
           ),
-        const Spacer(),
-        buildScoreBoard(
-          room!.players.map((p) => ScoreLine(p.name, p.score)).toList(),
+        const SizedBox(height: 16),
+        Expanded(
+          child: ListView(
+            children: [
+              buildCardMemoryBoard(onlineCardMemoryLines(includeCurrentRound: false)),
+              const SizedBox(height: 12),
+              buildScoreBoard(
+                room!.players.map((p) => ScoreLine(p.name, p.score)).toList(),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 12),
         SizedBox(
@@ -1141,6 +1240,8 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         buildScoreBoard(
           room!.players.map((p) => ScoreLine(p.name, p.score)).toList(),
         ),
+        const SizedBox(height: 12),
+        buildCardMemoryBoard(onlineCardMemoryLines(includeCurrentRound: true)),
         if (finished) ...[
           const SizedBox(height: 18),
           const Text('最终排名',
@@ -1168,6 +1269,20 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
   String playerNameById(String id) {
     return room!.players.firstWhere((player) => player.id == id).name;
+  }
+
+  List<CardMemoryLine> onlineCardMemoryLines({required bool includeCurrentRound}) {
+    return [
+      for (final player in room!.players)
+        CardMemoryLine(
+          player.name,
+          (player.usedCards
+                .where((card) =>
+                    includeCurrentRound || room!.currentPlays[player.id] != card)
+                .toList()
+            ..sort()),
+        ),
+    ];
   }
 }
 
