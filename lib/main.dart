@@ -26,7 +26,6 @@ const skillDeck = [
   'insurance',
   'silence',
   'chaos',
-  'defense',
   'last_word',
 ];
 
@@ -88,15 +87,15 @@ const skillDefinitions = {
   'insurance': SkillDefinition(
     id: 'insurance',
     name: 'insurance',
-    description: '没赢得 +3',
-    detail: '只影响自己。本轮如果你没有赢，结算时额外 +3 分；如果你赢了，就不会触发保险分。',
+    description: '没赢时递减加分',
+    detail: '本轮如果你没有赢，结算时额外加分。第1次使用+5，第2次使用+3，第3次使用+1；无论是否成功触发都消耗次数，最多使用3次。',
     icon: Icons.health_and_safety,
   ),
   'silence': SkillDefinition(
     id: 'silence',
     name: 'silence',
-    description: '禁用别人本轮技能',
-    detail: '选择一个对手，让他本轮不能再使用技能，并让他本轮已经启动的技能效果失效。',
+    description: '本轮全部技能失效',
+    detail: '发动后，本轮所有人已经启动的技能效果全部失效，包括自己的；之后本轮也不能再发动技能。每张技能牌一局仍然只能使用一次。',
     icon: Icons.volume_off,
   ),
   'chaos': SkillDefinition(
@@ -112,13 +111,6 @@ const skillDefinitions = {
     description: '猜中某人 +5',
     detail: '选择一个对手并猜他本轮会出的数字。结算时如果猜中，你额外 +5 分，不要求你赢本轮。',
     icon: Icons.center_focus_strong,
-  ),
-  'defense': SkillDefinition(
-    id: 'defense',
-    name: 'defense',
-    description: '本轮全部技能失效',
-    detail: '发动后，本轮所有人已经启动的技能效果全部失效，包括自己的；之后本轮也不能再发动技能。每张技能牌一局仍然只能使用一次。',
-    icon: Icons.shield,
   ),
   'last_word': SkillDefinition(
     id: 'last_word',
@@ -166,6 +158,15 @@ int taxAmountForPlayerCount(int count) {
   if (count <= 2) return 5;
   if (count == 3) return 2;
   return 1;
+}
+
+int insuranceBonusForUse(int useCount) {
+  return switch (useCount) {
+    1 => 5,
+    2 => 3,
+    3 => 1,
+    _ => 0,
+  };
 }
 
 List<int> makeFairTurnOrder({
@@ -304,8 +305,11 @@ class Player {
   bool mirrorActive = false;
   bool taxActive = false;
   bool insuranceActive = false;
+  int insuranceUses = 0;
+  int insuranceBonus = 0;
   bool anchorActive = false;
   bool lastWordActive = false;
+  bool lastWordAttemptedThisRound = false;
   int? ambushTargetIndex;
   int? ambushNumber;
   int ambushBonus = 0;
@@ -331,8 +335,11 @@ class Player {
     mirrorActive = false;
     taxActive = false;
     insuranceActive = false;
+    insuranceUses = 0;
+    insuranceBonus = 0;
     anchorActive = false;
     lastWordActive = false;
+    lastWordAttemptedThisRound = false;
     ambushTargetIndex = null;
     ambushNumber = null;
     ambushBonus = 0;
@@ -525,6 +532,13 @@ class _GamePageState extends State<GamePage> {
         .where((entry) => entry.value == targetNumber)
         .map((entry) => entry.key)
         .toList();
+    if (candidates.length > 1) {
+      for (final index in candidates) {
+        if (players[index].lastWordAttemptedThisRound) {
+          players[index].usedSkills.remove('last_word');
+        }
+      }
+    }
 
     List<int> winners;
 
@@ -580,8 +594,8 @@ class _GamePageState extends State<GamePage> {
       }
 
       if (player.insuranceActive && !winners.contains(i)) {
-        player.score += 3;
-        notes.add('insurance：${player.name} +3');
+        player.score += player.insuranceBonus;
+        notes.add('insurance：${player.name} +${player.insuranceBonus}');
       }
     }
 
@@ -615,6 +629,7 @@ class _GamePageState extends State<GamePage> {
         }
       }
       clearLocalRoundSkills(players[i]);
+      players[i].lastWordAttemptedThisRound = false;
     }
     if (compensation.isNotEmpty) {
       notes.add('连输补偿：${compensation.join('、')}');
@@ -641,6 +656,7 @@ class _GamePageState extends State<GamePage> {
     player.mirrorActive = false;
     player.taxActive = false;
     player.insuranceActive = false;
+    player.insuranceBonus = 0;
     player.anchorActive = false;
     player.lastWordActive = false;
     player.ambushTargetIndex = null;
@@ -666,7 +682,7 @@ class _GamePageState extends State<GamePage> {
 
   void activateDefense(Player player) {
     setState(() {
-      markLocalSkillUsed(player, 'defense');
+      markLocalSkillUsed(player, 'silence');
       clearAllLocalSkillEffects();
       defenseRound = true;
     });
@@ -775,9 +791,6 @@ class _GamePageState extends State<GamePage> {
     if (defenseRound) {
       return false;
     }
-    if (currentSilenced.contains(currentPlayer) && skillId != 'defense') {
-      return false;
-    }
     return switch (skillId) {
       'revolution' => !revolutionRound,
       'double' => !player.doubleActive,
@@ -786,11 +799,10 @@ class _GamePageState extends State<GamePage> {
       'ambush' => round < 9,
       'mirror' => !player.mirrorActive,
       'tax' => !player.taxActive,
-      'insurance' => !player.insuranceActive,
+      'insurance' => !player.insuranceActive && player.insuranceUses < 3,
       'silence' => true,
       'chaos' => true,
       'snipe' => true,
-      'defense' => true,
       'last_word' => !player.lastWordActive,
       _ => false,
     };
@@ -804,13 +816,12 @@ class _GamePageState extends State<GamePage> {
       'mirror' => player.mirrorActive,
       'tax' => player.taxActive,
       'insurance' => player.insuranceActive,
-      'defense' => defenseRound,
+      'silence' => defenseRound,
       'last_word' => player.lastWordActive,
       'ambush' => player.ambushNumber != null,
       'snipe' => player.snipeNumber != null,
       'chaos' => currentChaosDeltas.isNotEmpty,
       'lock' => currentLocks.isNotEmpty,
-      'silence' => currentSilenced.isNotEmpty,
       _ => false,
     };
   }
@@ -860,12 +871,16 @@ class _GamePageState extends State<GamePage> {
         break;
       case 'insurance':
         setState(() {
-          markLocalSkillUsed(player, skillId);
+          player.insuranceUses++;
+          player.insuranceBonus = insuranceBonusForUse(player.insuranceUses);
+          if (player.insuranceUses >= 3) {
+            markLocalSkillUsed(player, skillId);
+          }
           player.insuranceActive = true;
         });
         break;
       case 'silence':
-        await activateSilence();
+        activateDefense(player);
         break;
       case 'chaos':
         setState(() {
@@ -877,13 +892,11 @@ class _GamePageState extends State<GamePage> {
       case 'snipe':
         await activateSnipe();
         break;
-      case 'defense':
-        activateDefense(player);
-        break;
       case 'last_word':
         setState(() {
           markLocalSkillUsed(player, skillId);
           player.lastWordActive = true;
+          player.lastWordAttemptedThisRound = true;
         });
         break;
     }
@@ -944,6 +957,9 @@ class _GamePageState extends State<GamePage> {
 
     setState(() {
       player.usedSkills.remove(result);
+      if (result == 'insurance') {
+        player.insuranceUses = min(player.insuranceUses, 2);
+      }
       player.skillRefreshTokens--;
     });
   }
@@ -1532,14 +1548,13 @@ class _GamePageState extends State<GamePage> {
 
   String localSkillStatusText(Player player) {
     final items = [
-      if (currentSilenced.contains(currentPlayer)) '你本轮被 silence，不能用技能',
       if (revolutionRound) 'revolution：本轮比小',
       if (player.doubleActive) 'double：赢了得分翻倍',
       if (player.mirrorActive) 'mirror：点数变成 10-x',
       if (player.taxActive)
         'tax：从赢家拿 ${taxAmountForPlayerCount(players.length)} 分',
-      if (player.insuranceActive) 'insurance：没赢 +3',
-      if (defenseRound) 'defense：本轮全部技能失效',
+      if (player.insuranceActive) 'insurance：没赢 +${player.insuranceBonus}',
+      if (defenseRound) 'silence：本轮全部技能失效',
       if (player.lastWordActive) 'last word：并列优先',
       if (player.ambushTargetIndex != null && player.ambushNumber != null)
         'ambush：猜 ${players[player.ambushTargetIndex!].name} 出 ${player.ambushNumber}，抢 ${player.ambushBonus} 分',
@@ -1884,8 +1899,11 @@ class OnlinePlayer {
     this.mirrorActive = false,
     this.taxActive = false,
     this.insuranceActive = false,
+    this.insuranceUses = 0,
+    this.insuranceBonus = 0,
     this.anchorActive = false,
     this.lastWordActive = false,
+    this.lastWordAttemptedThisRound = false,
     this.ambushTargetId,
     this.ambushNumber,
     this.ambushBonus = 0,
@@ -1909,8 +1927,11 @@ class OnlinePlayer {
   bool mirrorActive;
   bool taxActive;
   bool insuranceActive;
+  int insuranceUses;
+  int insuranceBonus;
   bool anchorActive;
   bool lastWordActive;
+  bool lastWordAttemptedThisRound;
   String? ambushTargetId;
   int? ambushNumber;
   int ambushBonus;
@@ -1936,8 +1957,11 @@ class OnlinePlayer {
     mirrorActive = false;
     taxActive = false;
     insuranceActive = false;
+    insuranceUses = 0;
+    insuranceBonus = 0;
     anchorActive = false;
     lastWordActive = false;
+    lastWordAttemptedThisRound = false;
     ambushTargetId = null;
     ambushNumber = null;
     ambushBonus = 0;
@@ -1960,8 +1984,11 @@ class OnlinePlayer {
     'mirrorActive': mirrorActive,
     'taxActive': taxActive,
     'insuranceActive': insuranceActive,
+    'insuranceUses': insuranceUses,
+    'insuranceBonus': insuranceBonus,
     'anchorActive': anchorActive,
     'lastWordActive': lastWordActive,
+    'lastWordAttemptedThisRound': lastWordAttemptedThisRound,
     'ambushTargetId': ambushTargetId,
     'ambushNumber': ambushNumber,
     'ambushBonus': ambushBonus,
@@ -1987,8 +2014,12 @@ class OnlinePlayer {
       mirrorActive: (json['mirrorActive'] as bool?) ?? false,
       taxActive: (json['taxActive'] as bool?) ?? false,
       insuranceActive: (json['insuranceActive'] as bool?) ?? false,
+      insuranceUses: (json['insuranceUses'] as int?) ?? 0,
+      insuranceBonus: (json['insuranceBonus'] as int?) ?? 0,
       anchorActive: (json['anchorActive'] as bool?) ?? false,
       lastWordActive: (json['lastWordActive'] as bool?) ?? false,
+      lastWordAttemptedThisRound:
+          (json['lastWordAttemptedThisRound'] as bool?) ?? false,
       ambushTargetId: json['ambushTargetId'] as String?,
       ambushNumber: json['ambushNumber'] as int?,
       ambushBonus: (json['ambushBonus'] as int?) ?? 0,
@@ -2495,7 +2526,6 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       return;
     }
     if (room!.defenseRound) return;
-    if (room!.silencedPlayers.contains(id) && type != 'defense') return;
 
     switch (type) {
       case 'revolution':
@@ -2556,20 +2586,17 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         break;
       case 'insurance':
         if (player.insuranceActive) return;
-        player.usedSkills.add(type);
+        player.insuranceUses++;
+        player.insuranceBonus = insuranceBonusForUse(player.insuranceUses);
+        if (player.insuranceUses >= 3) {
+          player.usedSkills.add(type);
+        }
         player.insuranceActive = true;
         break;
       case 'silence':
-        final targetId = payload['targetId'] as String?;
-        if (targetId == null || targetId == id) return;
-        final targetIndex = room!.players.indexWhere(
-          (item) => item.id == targetId,
-        );
-        if (targetIndex == -1) {
-          return;
-        }
         player.usedSkills.add(type);
-        silenceOnlinePlayer(targetId: targetId, sourceId: id);
+        clearAllOnlineSkillEffects();
+        room!.defenseRound = true;
         break;
       case 'chaos':
         player.usedSkills.add(type);
@@ -2586,15 +2613,11 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         player.snipeTargetId = targetId;
         player.snipeNumber = number;
         break;
-      case 'defense':
-        player.usedSkills.add(type);
-        clearAllOnlineSkillEffects();
-        room!.defenseRound = true;
-        break;
       case 'last_word':
         if (player.lastWordActive) return;
         player.usedSkills.add(type);
         player.lastWordActive = true;
+        player.lastWordAttemptedThisRound = true;
         break;
       default:
         return;
@@ -2623,6 +2646,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     }
 
     player.usedSkills.remove(skillId);
+    if (skillId == 'insurance') {
+      player.insuranceUses = min(player.insuranceUses, 2);
+    }
     player.skillRefreshTokens--;
     setState(() {});
     broadcastState();
@@ -2728,9 +2754,6 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     if (room!.defenseRound) {
       return false;
     }
-    if (room!.silencedPlayers.contains(me.id) && skillId != 'defense') {
-      return false;
-    }
     return switch (skillId) {
       'revolution' => !room!.revolutionRound,
       'double' => !me.doubleActive,
@@ -2739,11 +2762,10 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       'ambush' => room!.round < 9,
       'mirror' => !me.mirrorActive,
       'tax' => !me.taxActive,
-      'insurance' => !me.insuranceActive,
+      'insurance' => !me.insuranceActive && me.insuranceUses < 3,
       'silence' => true,
       'chaos' => true,
       'snipe' => true,
-      'defense' => true,
       'last_word' => !me.lastWordActive,
       _ => false,
     };
@@ -2758,13 +2780,12 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       'mirror' => me.mirrorActive,
       'tax' => me.taxActive,
       'insurance' => me.insuranceActive,
-      'defense' => room!.defenseRound,
+      'silence' => room!.defenseRound,
       'last_word' => me.lastWordActive,
       'ambush' => me.ambushNumber != null,
       'snipe' => me.snipeNumber != null,
       'chaos' => room!.chaosDeltas.isNotEmpty,
       'lock' => room!.lockedCards.isNotEmpty,
-      'silence' => room!.silencedPlayers.isNotEmpty,
       _ => false,
     };
   }
@@ -2851,7 +2872,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       case 'mirror':
       case 'tax':
       case 'insurance':
-      case 'defense':
+      case 'silence':
       case 'last_word':
         await sendSkill({'id': playerId, 'type': skillId});
         break;
@@ -2869,9 +2890,6 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         break;
       case 'snipe':
         await activateOnlineSnipe();
-        break;
-      case 'silence':
-        await activateOnlineSilence();
         break;
     }
   }
@@ -3315,6 +3333,14 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         .where((entry) => entry.value == targetNumber)
         .map((entry) => entry.key)
         .toList();
+    if (candidates.length > 1) {
+      for (final id in candidates) {
+        final player = currentRoom.players.firstWhere((item) => item.id == id);
+        if (player.lastWordAttemptedThisRound) {
+          player.usedSkills.remove('last_word');
+        }
+      }
+    }
 
     List<String> winnerIds;
     final lastWordCandidates = candidates
@@ -3382,8 +3408,8 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       }
 
       if (player.insuranceActive && !winnerIds.contains(player.id)) {
-        player.score += 3;
-        notes.add('insurance：${player.name} +3');
+        player.score += player.insuranceBonus;
+        notes.add('insurance：${player.name} +${player.insuranceBonus}');
       }
     }
 
@@ -3417,6 +3443,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         }
       }
       clearOnlineRoundSkills(player);
+      player.lastWordAttemptedThisRound = false;
     }
     if (compensation.isNotEmpty) {
       notes.add('连输补偿：${compensation.join('、')}');
@@ -3450,6 +3477,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     player.mirrorActive = false;
     player.taxActive = false;
     player.insuranceActive = false;
+    player.insuranceBonus = 0;
     player.anchorActive = false;
     player.lastWordActive = false;
     player.ambushTargetId = null;
@@ -3773,14 +3801,13 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
   String onlineSkillStatusText(OnlinePlayer player) {
     final items = [
-      if (room!.silencedPlayers.contains(player.id)) '你本轮被 silence，不能用技能',
       if (room!.revolutionRound) 'revolution：本轮比小',
       if (player.doubleActive) 'double：赢了得分翻倍',
       if (player.mirrorActive) 'mirror：点数变成 10-x',
       if (player.taxActive)
         'tax：从赢家拿 ${taxAmountForPlayerCount(room!.players.length)} 分',
-      if (player.insuranceActive) 'insurance：没赢 +3',
-      if (room!.defenseRound) 'defense：本轮全部技能失效',
+      if (player.insuranceActive) 'insurance：没赢 +${player.insuranceBonus}',
+      if (room!.defenseRound) 'silence：本轮全部技能失效',
       if (player.lastWordActive) 'last word：并列优先',
       if (player.ambushTargetId != null && player.ambushNumber != null)
         'ambush：猜 ${playerNameById(player.ambushTargetId!)} 出 ${player.ambushNumber}，抢 ${player.ambushBonus} 分',
