@@ -1,4 +1,4 @@
-import 'dart:math';
+﻿import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -116,6 +116,11 @@ class Player {
   double score = 0;
   final Set<int> usedCards = {};
   bool revolutionUsed = false;
+  bool doubleUsed = false;
+  bool doubleActive = false;
+  bool lockUsed = false;
+  bool peekUsed = false;
+  int lossStreak = 0;
 }
 
 class RoundResult {
@@ -153,6 +158,7 @@ class _GamePageState extends State<GamePage> {
   int? selectedCard;
   int? lastSingleWinner;
   bool revolutionRound = false;
+  final Map<int, int> currentLocks = {};
 
   final nameControllers = List.generate(
     5,
@@ -181,6 +187,7 @@ class _GamePageState extends State<GamePage> {
       selectedCard = null;
       lastSingleWinner = null;
       revolutionRound = false;
+      currentLocks.clear();
       currentPlays.clear();
       history.clear();
       latestResult = null;
@@ -238,15 +245,37 @@ class _GamePageState extends State<GamePage> {
     } else if (lastSingleWinner != null &&
         candidates.contains(lastSingleWinner)) {
       winners = [lastSingleWinner!];
-      reason = '$reason；多人同为最大，上一轮胜者优先';
+      reason = '$reason；多人同为目标数字，上一轮胜者优先';
     } else {
       winners = candidates;
-      reason = '$reason；多人同为最大，上一轮无可用胜者，平分分数';
+      reason = '$reason；多人同为目标数字，上一轮无可用胜者，平分分数';
     }
 
     final gain = pool / winners.length;
+    final notes = <String>[];
     for (final winner in winners) {
-      players[winner].score += gain;
+      final multiplier = players[winner].doubleActive ? 2 : 1;
+      players[winner].score += gain * multiplier;
+      if (multiplier == 2) {
+        notes.add('double：${players[winner].name} 得分翻倍');
+      }
+    }
+
+    final compensation = <String>[];
+    for (int i = 0; i < players.length; i++) {
+      if (winners.contains(i)) {
+        players[i].lossStreak = 0;
+      } else {
+        players[i].lossStreak++;
+        if (players[i].lossStreak >= 2) {
+          players[i].score += 2;
+          compensation.add('${players[i].name} +2');
+        }
+      }
+      players[i].doubleActive = false;
+    }
+    if (compensation.isNotEmpty) {
+      notes.add('连输补偿：${compensation.join('、')}');
     }
 
     lastSingleWinner = winners.length == 1 ? winners.first : null;
@@ -256,7 +285,7 @@ class _GamePageState extends State<GamePage> {
       plays: Map<int, int>.from(currentPlays),
       pool: pool,
       winners: winners,
-      reason: reason,
+      reason: notes.isEmpty ? reason : '$reason；${notes.join('；')}',
       revolution: revolutionRound,
     );
     history.add(latestResult!);
@@ -271,6 +300,7 @@ class _GamePageState extends State<GamePage> {
       currentPlayer = 0;
       selectedCard = null;
       revolutionRound = false;
+      currentLocks.clear();
       phase = Phase.choosing;
     });
   }
@@ -287,6 +317,7 @@ class _GamePageState extends State<GamePage> {
       selectedCard = null;
       lastSingleWinner = null;
       revolutionRound = false;
+      currentLocks.clear();
     });
   }
 
@@ -298,6 +329,130 @@ class _GamePageState extends State<GamePage> {
       revolutionRound = true;
       player.revolutionUsed = true;
     });
+  }
+
+  void activateDouble() {
+    final player = players[currentPlayer];
+    if (player.doubleUsed || player.doubleActive) return;
+
+    setState(() {
+      player.doubleUsed = true;
+      player.doubleActive = true;
+    });
+  }
+
+  Future<void> activateLock() async {
+    final player = players[currentPlayer];
+    if (player.lockUsed) return;
+
+    final targets = [
+      for (int i = 0; i < players.length; i++)
+        if (i != currentPlayer && !currentPlays.containsKey(i)) i,
+    ];
+    if (targets.isEmpty) {
+      showMessage('没有可以锁定的玩家');
+      return;
+    }
+
+    var target = targets.first;
+    var card = 9;
+    final result = await showDialog<(int, int)>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('lock'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<int>(
+                initialValue: target,
+                decoration: const InputDecoration(labelText: '锁定玩家'),
+                items: [
+                  for (final index in targets)
+                    DropdownMenuItem(value: index, child: Text(players[index].name)),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => target = value);
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                initialValue: card,
+                decoration: const InputDecoration(labelText: '禁止数字'),
+                items: [
+                  for (int i = 1; i <= 9; i++)
+                    DropdownMenuItem(value: i, child: Text('$i')),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => card = value);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop((target, card)),
+              child: const Text('确认'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    setState(() {
+      player.lockUsed = true;
+      currentLocks[result.$1] = result.$2;
+    });
+  }
+
+  Future<void> activatePeek() async {
+    final player = players[currentPlayer];
+    if (player.peekUsed) return;
+
+    final targets = currentPlays.keys.toList();
+    if (targets.isEmpty) {
+      showMessage('本轮还没有可偷看的牌');
+      return;
+    }
+
+    setState(() {
+      player.peekUsed = true;
+    });
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('peek'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final index in targets)
+              ListTile(
+                title: Text(players[index].name),
+                trailing: Text(
+                  '${currentPlays[index]}',
+                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -375,11 +530,22 @@ class _GamePageState extends State<GamePage> {
         Text('请 ${player.name} 出牌',
             style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
         const SizedBox(height: 10),
-        buildRevolutionButton(
-          active: revolutionRound,
-          used: player.revolutionUsed,
-          enabled: !player.revolutionUsed && !revolutionRound,
-          onPressed: activateRevolution,
+        buildSkillPanel(
+          revolutionActive: revolutionRound,
+          revolutionUsed: player.revolutionUsed,
+          revolutionEnabled: !player.revolutionUsed && !revolutionRound,
+          onRevolution: activateRevolution,
+          doubleActive: player.doubleActive,
+          doubleUsed: player.doubleUsed,
+          doubleEnabled: !player.doubleUsed,
+          onDouble: activateDouble,
+          lockUsed: player.lockUsed,
+          lockEnabled: !player.lockUsed,
+          onLock: activateLock,
+          peekUsed: player.peekUsed,
+          peekEnabled: !player.peekUsed && currentPlays.isNotEmpty,
+          onPeek: activatePeek,
+          lockText: localLockText(),
         ),
         const SizedBox(height: 18),
         Wrap(
@@ -388,13 +554,16 @@ class _GamePageState extends State<GamePage> {
           children: List.generate(9, (index) {
             final card = index + 1;
             final used = player.usedCards.contains(card);
+            final locked = currentLocks[currentPlayer] == card;
             final selected = selectedCard == card;
 
             return SizedBox(
               width: 76,
               height: 76,
               child: FilledButton(
-                onPressed: used ? null : () => setState(() => selectedCard = card),
+                onPressed: used || locked
+                    ? null
+                    : () => setState(() => selectedCard = card),
                 style: FilledButton.styleFrom(
                   backgroundColor:
                       selected ? const Color(0xFFE09F3E) : const Color(0xFF2E7D6F),
@@ -507,6 +676,13 @@ class _GamePageState extends State<GamePage> {
       return CardMemoryLine(players[playerIndex].name, cards);
     });
   }
+
+  String localLockText() {
+    if (currentLocks.isEmpty) return '';
+    return currentLocks.entries
+        .map((entry) => '${players[entry.key].name} 不能出 ${entry.value}')
+        .join('；');
+  }
 }
 
 class ScoreLine {
@@ -523,26 +699,112 @@ class CardMemoryLine {
   final List<int> cards;
 }
 
-Widget buildRevolutionButton({
+Widget buildSkillPanel({
+  required bool revolutionActive,
+  required bool revolutionUsed,
+  required bool revolutionEnabled,
+  required VoidCallback onRevolution,
+  required bool doubleActive,
+  required bool doubleUsed,
+  required bool doubleEnabled,
+  required VoidCallback onDouble,
+  required bool lockUsed,
+  required bool lockEnabled,
+  required VoidCallback onLock,
+  required bool peekUsed,
+  required bool peekEnabled,
+  required VoidCallback onPeek,
+  required String lockText,
+}) {
+  return Card(
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('技能牌',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              buildSkillButton(
+                icon: Icons.swap_vert,
+                label: switch ((revolutionActive, revolutionUsed)) {
+                  (true, _) => 'revolution 已启动',
+                  (false, true) => 'revolution 已用',
+                  _ => 'revolution',
+                },
+                active: revolutionActive,
+                used: revolutionUsed,
+                enabled: revolutionEnabled,
+                onPressed: onRevolution,
+              ),
+              buildSkillButton(
+                icon: Icons.close_fullscreen,
+                label: switch ((doubleActive, doubleUsed)) {
+                  (true, _) => 'double 已启动',
+                  (false, true) => 'double 已用',
+                  _ => 'double',
+                },
+                active: doubleActive,
+                used: doubleUsed,
+                enabled: doubleEnabled,
+                onPressed: onDouble,
+              ),
+              buildSkillButton(
+                icon: Icons.block,
+                label: lockUsed ? 'lock 已用' : 'lock',
+                active: lockText.isNotEmpty,
+                used: lockUsed,
+                enabled: lockEnabled,
+                onPressed: onLock,
+              ),
+              buildSkillButton(
+                icon: Icons.visibility,
+                label: peekUsed ? 'peek 已用' : 'peek',
+                active: false,
+                used: peekUsed,
+                enabled: peekEnabled,
+                onPressed: onPeek,
+              ),
+            ],
+          ),
+          if (revolutionActive || doubleActive || lockText.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              [
+                if (revolutionActive) '本轮比小',
+                if (doubleActive) '本轮获胜得分翻倍',
+                if (lockText.isNotEmpty) lockText,
+              ].join('；'),
+              style: const TextStyle(color: Colors.black54),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
+Widget buildSkillButton({
+  required IconData icon,
+  required String label,
   required bool active,
   required bool used,
   required bool enabled,
   required VoidCallback onPressed,
 }) {
+  final color = active ? const Color(0xFFE09F3E) : const Color(0xFF2E7D6F);
   return OutlinedButton.icon(
     onPressed: enabled ? onPressed : null,
-    icon: const Icon(Icons.swap_vert),
-    label: Text(switch ((active, used)) {
-      (true, _) => 'revolution 已启动：本轮比小',
-      (false, true) => 'revolution 已用完',
-      _ => 'revolution：本局一次，本轮改成比小',
-    }),
+    icon: Icon(icon, size: 18),
+    label: Text(label),
     style: OutlinedButton.styleFrom(
-      foregroundColor: active ? const Color(0xFFE09F3E) : const Color(0xFF2E7D6F),
-      side: BorderSide(
-        color: active ? const Color(0xFFE09F3E) : const Color(0xFF2E7D6F),
-      ),
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+      foregroundColor: used && !active ? Colors.black54 : color,
+      side: BorderSide(color: used && !active ? Colors.black26 : color),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
     ),
   );
 }
@@ -644,6 +906,11 @@ class OnlinePlayer {
     required this.name,
     this.score = 0,
     this.revolutionUsed = false,
+    this.doubleUsed = false,
+    this.doubleActive = false,
+    this.lockUsed = false,
+    this.peekUsed = false,
+    this.lossStreak = 0,
     Set<int>? usedCards,
   }) : usedCards = usedCards ?? {};
 
@@ -651,6 +918,11 @@ class OnlinePlayer {
   final String name;
   double score;
   bool revolutionUsed;
+  bool doubleUsed;
+  bool doubleActive;
+  bool lockUsed;
+  bool peekUsed;
+  int lossStreak;
   final Set<int> usedCards;
 
   Map<String, dynamic> toJson() => {
@@ -658,6 +930,11 @@ class OnlinePlayer {
         'name': name,
         'score': score,
         'revolutionUsed': revolutionUsed,
+        'doubleUsed': doubleUsed,
+        'doubleActive': doubleActive,
+        'lockUsed': lockUsed,
+        'peekUsed': peekUsed,
+        'lossStreak': lossStreak,
         'usedCards': usedCards.toList(),
       };
 
@@ -667,6 +944,11 @@ class OnlinePlayer {
       name: json['name'] as String,
       score: (json['score'] as num).toDouble(),
       revolutionUsed: (json['revolutionUsed'] as bool?) ?? false,
+      doubleUsed: (json['doubleUsed'] as bool?) ?? false,
+      doubleActive: (json['doubleActive'] as bool?) ?? false,
+      lockUsed: (json['lockUsed'] as bool?) ?? false,
+      peekUsed: (json['peekUsed'] as bool?) ?? false,
+      lossStreak: (json['lossStreak'] as int?) ?? 0,
       usedCards:
           ((json['usedCards'] as List<dynamic>?) ?? []).map((item) => item as int).toSet(),
     );
@@ -721,8 +1003,10 @@ class OnlineRoomState {
     this.lastSingleWinnerId,
     this.revolutionRound = false,
     Map<String, int>? currentPlays,
+    Map<String, int>? lockedCards,
     this.latestResult,
-  }) : currentPlays = currentPlays ?? {};
+  })  : currentPlays = currentPlays ?? {},
+        lockedCards = lockedCards ?? {};
 
   OnlinePhase phase;
   int playerCount;
@@ -732,6 +1016,7 @@ class OnlineRoomState {
   bool revolutionRound;
   List<OnlinePlayer> players;
   Map<String, int> currentPlays;
+  Map<String, int> lockedCards;
   OnlineRoundResult? latestResult;
 
   Map<String, dynamic> toJson() => {
@@ -743,6 +1028,7 @@ class OnlineRoomState {
         'revolutionRound': revolutionRound,
         'players': players.map((player) => player.toJson()).toList(),
         'currentPlays': currentPlays,
+        'lockedCards': lockedCards,
         'latestResult': latestResult?.toJson(),
       };
 
@@ -758,6 +1044,7 @@ class OnlineRoomState {
           .map((item) => OnlinePlayer.fromJson(Map<String, dynamic>.from(item as Map)))
           .toList(),
       currentPlays: Map<String, int>.from(json['currentPlays'] as Map),
+      lockedCards: Map<String, int>.from((json['lockedCards'] as Map?) ?? {}),
       latestResult: json['latestResult'] == null
           ? null
           : OnlineRoundResult.fromJson(
@@ -945,6 +1232,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         .onBroadcast(event: 'state', callback: handleState)
         .onBroadcast(event: 'submit_card', callback: handleSubmitCard)
         .onBroadcast(event: 'revolution', callback: handleRevolution)
+        .onBroadcast(event: 'skill', callback: handleSkill)
         .onBroadcast(event: 'next_round', callback: handleNextRound)
         .onBroadcast(event: 'state_request', callback: handleStateRequest)
         .subscribe((status, error) {
@@ -1013,6 +1301,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
     final player = room!.players[playerIndex];
     if (player.usedCards.contains(card)) return;
+    if (room!.lockedCards[player.id] == card) return;
 
     player.usedCards.add(card);
     room!.currentPlays[player.id] = card;
@@ -1046,6 +1335,56 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     broadcastState();
   }
 
+  void handleSkill(Map<String, dynamic> payload) {
+    if (!isHost || room == null || room!.phase != OnlinePhase.choosing) return;
+
+    final id = payload['id'] as String?;
+    final type = payload['type'] as String?;
+    if (id == null || type == null) return;
+
+    final playerIndex = room!.players.indexWhere((player) => player.id == id);
+    if (playerIndex != room!.currentPlayerIndex) return;
+
+    final player = room!.players[playerIndex];
+
+    switch (type) {
+      case 'revolution':
+        if (player.revolutionUsed || room!.revolutionRound) return;
+        player.revolutionUsed = true;
+        room!.revolutionRound = true;
+        break;
+      case 'double':
+        if (player.doubleUsed || player.doubleActive) return;
+        player.doubleUsed = true;
+        player.doubleActive = true;
+        break;
+      case 'lock':
+        final targetId = payload['targetId'] as String?;
+        final card = payload['card'] as int?;
+        if (targetId == null || card == null) return;
+        if (player.lockUsed || targetId == id || card < 1 || card > 9) return;
+        if (room!.currentPlays.containsKey(targetId)) return;
+        final targetIndex = room!.players.indexWhere((item) => item.id == targetId);
+        if (targetIndex == -1 || room!.players[targetIndex].usedCards.contains(card)) {
+          return;
+        }
+        player.lockUsed = true;
+        room!.lockedCards[targetId] = card;
+        break;
+      case 'peek':
+        final targetId = payload['targetId'] as String?;
+        if (targetId == null) return;
+        if (player.peekUsed || !room!.currentPlays.containsKey(targetId)) return;
+        player.peekUsed = true;
+        break;
+      default:
+        return;
+    }
+
+    setState(() {});
+    broadcastState();
+  }
+
   void handleNextRound(Map<String, dynamic> payload) {
     if (!isHost || room == null || room!.phase != OnlinePhase.reveal) return;
     startNextOnlineRound();
@@ -1075,6 +1414,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       room!.round = 1;
       room!.currentPlayerIndex = 0;
       room!.currentPlays.clear();
+      room!.lockedCards.clear();
       room!.latestResult = null;
       room!.lastSingleWinnerId = null;
       room!.revolutionRound = false;
@@ -1087,12 +1427,178 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     if (!isMyTurn || me == null) return;
     if (me.revolutionUsed || room!.revolutionRound) return;
 
-    final payload = {'id': playerId};
+    final payload = {'id': playerId, 'type': 'revolution'};
     if (isHost) {
-      handleRevolution(payload);
+      handleSkill(payload);
     } else {
-      send('revolution', payload);
+      send('skill', payload);
     }
+  }
+
+  void activateOnlineDouble() {
+    final me = myIndex >= 0 ? room!.players[myIndex] : null;
+    if (!isMyTurn || me == null || me.doubleUsed) return;
+
+    final payload = {'id': playerId, 'type': 'double'};
+    if (isHost) {
+      handleSkill(payload);
+    } else {
+      send('skill', payload);
+    }
+  }
+
+  Future<void> activateOnlineLock() async {
+    final me = myIndex >= 0 ? room!.players[myIndex] : null;
+    if (!isMyTurn || me == null || me.lockUsed) return;
+
+    final targets = [
+      for (final player in room!.players)
+        if (player.id != playerId && !room!.currentPlays.containsKey(player.id)) player,
+    ];
+    if (targets.isEmpty) {
+      showOnlineMessage('没有可以锁定的玩家');
+      return;
+    }
+
+    var targetId = targets.first.id;
+    var card = 9;
+    final result = await showDialog<(String, int)>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('lock'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: targetId,
+                decoration: const InputDecoration(labelText: '锁定玩家'),
+                items: [
+                  for (final player in targets)
+                    DropdownMenuItem(value: player.id, child: Text(player.name)),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => targetId = value);
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                initialValue: card,
+                decoration: const InputDecoration(labelText: '禁止数字'),
+                items: [
+                  for (int i = 1; i <= 9; i++)
+                    DropdownMenuItem(value: i, child: Text('$i')),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => card = value);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop((targetId, card)),
+              child: const Text('确认'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    final payload = {
+      'id': playerId,
+      'type': 'lock',
+      'targetId': result.$1,
+      'card': result.$2,
+    };
+    if (isHost) {
+      handleSkill(payload);
+    } else {
+      send('skill', payload);
+    }
+  }
+
+  Future<void> activateOnlinePeek() async {
+    final me = myIndex >= 0 ? room!.players[myIndex] : null;
+    if (!isMyTurn || me == null || me.peekUsed) return;
+
+    final targets = [
+      for (final player in room!.players)
+        if (room!.currentPlays.containsKey(player.id)) player,
+    ];
+    if (targets.isEmpty) {
+      showOnlineMessage('本轮还没有可偷看的牌');
+      return;
+    }
+
+    var targetId = targets.first.id;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('peek'),
+          content: DropdownButtonFormField<String>(
+            initialValue: targetId,
+            decoration: const InputDecoration(labelText: '偷看玩家'),
+            items: [
+              for (final player in targets)
+                DropdownMenuItem(value: player.id, child: Text(player.name)),
+            ],
+            onChanged: (value) {
+              if (value != null) setDialogState(() => targetId = value);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(targetId),
+              child: const Text('偷看'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    if (!mounted) return;
+    final target = room!.players.firstWhere((player) => player.id == result);
+    final card = room!.currentPlays[result];
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('peek 结果'),
+        content: Text(
+          '${target.name} 本轮出了 $card',
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+
+    final payload = {'id': playerId, 'type': 'peek', 'targetId': result};
+    if (isHost) {
+      handleSkill(payload);
+    } else {
+      send('skill', payload);
+    }
+  }
+
+  void showOnlineMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void submitSelectedCard() {
@@ -1142,16 +1648,38 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     } else if (currentRoom.lastSingleWinnerId != null &&
         candidates.contains(currentRoom.lastSingleWinnerId)) {
       winnerIds = [currentRoom.lastSingleWinnerId!];
-      reason = '$reason；多人同为最大，上一轮胜者优先';
+      reason = '$reason；多人同为目标数字，上一轮胜者优先';
     } else {
       winnerIds = candidates;
-      reason = '$reason；多人同为最大，上一轮无可用胜者，平分分数';
+      reason = '$reason；多人同为目标数字，上一轮无可用胜者，平分分数';
     }
 
     final gain = pool / winnerIds.length;
+    final notes = <String>[];
     for (final winnerId in winnerIds) {
       final winner = currentRoom.players.firstWhere((player) => player.id == winnerId);
-      winner.score += gain;
+      final multiplier = winner.doubleActive ? 2 : 1;
+      winner.score += gain * multiplier;
+      if (multiplier == 2) {
+        notes.add('double：${winner.name} 得分翻倍');
+      }
+    }
+
+    final compensation = <String>[];
+    for (final player in currentRoom.players) {
+      if (winnerIds.contains(player.id)) {
+        player.lossStreak = 0;
+      } else {
+        player.lossStreak++;
+        if (player.lossStreak >= 2) {
+          player.score += 2;
+          compensation.add('${player.name} +2');
+        }
+      }
+      player.doubleActive = false;
+    }
+    if (compensation.isNotEmpty) {
+      notes.add('连输补偿：${compensation.join('、')}');
     }
 
     currentRoom.lastSingleWinnerId = winnerIds.length == 1 ? winnerIds.first : null;
@@ -1160,10 +1688,11 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       plays: Map<String, int>.from(currentRoom.currentPlays),
       pool: pool,
       winnerIds: winnerIds,
-      reason: reason,
+      reason: notes.isEmpty ? reason : '$reason；${notes.join('；')}',
       revolution: currentRoom.revolutionRound,
     );
     currentRoom.currentPlays.clear();
+    currentRoom.lockedCards.clear();
     currentRoom.phase =
         currentRoom.round == 9 ? OnlinePhase.finished : OnlinePhase.reveal;
   }
@@ -1174,6 +1703,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       room!.currentPlayerIndex = 0;
       room!.phase = OnlinePhase.choosing;
       room!.revolutionRound = false;
+      room!.lockedCards.clear();
       selectedCard = null;
     });
     broadcastState();
@@ -1253,14 +1783,28 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
           style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 10),
-        buildRevolutionButton(
-          active: room!.revolutionRound,
-          used: me?.revolutionUsed ?? true,
-          enabled: isMyTurn &&
+        buildSkillPanel(
+          revolutionActive: room!.revolutionRound,
+          revolutionUsed: me?.revolutionUsed ?? true,
+          revolutionEnabled: isMyTurn &&
               me != null &&
               !me.revolutionUsed &&
               !room!.revolutionRound,
-          onPressed: activateOnlineRevolution,
+          onRevolution: activateOnlineRevolution,
+          doubleActive: me?.doubleActive ?? false,
+          doubleUsed: me?.doubleUsed ?? true,
+          doubleEnabled: isMyTurn && me != null && !me.doubleUsed,
+          onDouble: activateOnlineDouble,
+          lockUsed: me?.lockUsed ?? true,
+          lockEnabled: isMyTurn && me != null && !me.lockUsed,
+          onLock: activateOnlineLock,
+          peekUsed: me?.peekUsed ?? true,
+          peekEnabled: isMyTurn &&
+              me != null &&
+              !me.peekUsed &&
+              room!.currentPlays.isNotEmpty,
+          onPeek: activateOnlinePeek,
+          lockText: onlineLockText(),
         ),
         const SizedBox(height: 18),
         if (me != null)
@@ -1270,12 +1814,13 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
             children: List.generate(9, (index) {
               final card = index + 1;
               final used = me.usedCards.contains(card);
+              final locked = room!.lockedCards[me.id] == card;
               final selected = selectedCard == card;
               return SizedBox(
                 width: 76,
                 height: 76,
                 child: FilledButton(
-                  onPressed: isMyTurn && !used
+                  onPressed: isMyTurn && !used && !locked
                       ? () => setState(() => selectedCard = card)
                       : null,
                   style: FilledButton.styleFrom(
@@ -1403,6 +1948,13 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         ),
     ];
   }
+
+  String onlineLockText() {
+    if (room!.lockedCards.isEmpty) return '';
+    return room!.lockedCards.entries
+        .map((entry) => '${playerNameById(entry.key)} 不能出 ${entry.value}')
+        .join('；');
+  }
 }
 
 String makeRoomCode() {
@@ -1410,3 +1962,4 @@ String makeRoomCode() {
   final random = Random();
   return List.generate(5, (_) => letters[random.nextInt(letters.length)]).join();
 }
+
