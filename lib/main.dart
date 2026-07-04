@@ -124,6 +124,7 @@ class RoundResult {
     required this.pool,
     required this.winners,
     required this.reason,
+    required this.revolution,
   });
 
   final int round;
@@ -131,6 +132,7 @@ class RoundResult {
   final int pool;
   final List<int> winners;
   final String reason;
+  final bool revolution;
 }
 
 enum Phase { setup, choosing, reveal, finished }
@@ -149,6 +151,7 @@ class _GamePageState extends State<GamePage> {
   int currentPlayer = 0;
   int? selectedCard;
   int? lastSingleWinner;
+  bool revolutionRound = false;
 
   final nameControllers = List.generate(
     5,
@@ -176,6 +179,7 @@ class _GamePageState extends State<GamePage> {
       currentPlayer = 0;
       selectedCard = null;
       lastSingleWinner = null;
+      revolutionRound = false;
       currentPlays.clear();
       history.clear();
       latestResult = null;
@@ -208,11 +212,17 @@ class _GamePageState extends State<GamePage> {
     String reason;
 
     if (hasOne && hasNine) {
-      targetNumber = 1;
-      reason = '场上同时出现 1 和 9，本轮 1 获胜';
+      targetNumber = revolutionRound ? 9 : 1;
+      reason = revolutionRound
+          ? 'revolution！场上同时出现 1 和 9，本轮 9 获胜'
+          : '场上同时出现 1 和 9，本轮 1 获胜';
     } else {
-      targetNumber = values.reduce((a, b) => a > b ? a : b);
-      reason = '本轮最大数字是 $targetNumber';
+      targetNumber = revolutionRound
+          ? values.reduce((a, b) => a < b ? a : b)
+          : values.reduce((a, b) => a > b ? a : b);
+      reason = revolutionRound
+          ? 'revolution！本轮最小数字是 $targetNumber'
+          : '本轮最大数字是 $targetNumber';
     }
 
     final candidates = currentPlays.entries
@@ -246,6 +256,7 @@ class _GamePageState extends State<GamePage> {
       pool: pool,
       winners: winners,
       reason: reason,
+      revolution: revolutionRound,
     );
     history.add(latestResult!);
 
@@ -258,6 +269,7 @@ class _GamePageState extends State<GamePage> {
       round++;
       currentPlayer = 0;
       selectedCard = null;
+      revolutionRound = false;
       phase = Phase.choosing;
     });
   }
@@ -273,6 +285,15 @@ class _GamePageState extends State<GamePage> {
       currentPlayer = 0;
       selectedCard = null;
       lastSingleWinner = null;
+      revolutionRound = false;
+    });
+  }
+
+  void activateRevolution() {
+    if (currentPlays.isNotEmpty || revolutionRound) return;
+
+    setState(() {
+      revolutionRound = true;
     });
   }
 
@@ -350,6 +371,12 @@ class _GamePageState extends State<GamePage> {
         const SizedBox(height: 8),
         Text('请 ${player.name} 出牌',
             style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 10),
+        buildRevolutionButton(
+          active: revolutionRound,
+          enabled: currentPlays.isEmpty && !revolutionRound,
+          onPressed: activateRevolution,
+        ),
         const SizedBox(height: 18),
         Wrap(
           spacing: 10,
@@ -492,6 +519,25 @@ class CardMemoryLine {
   final List<int> cards;
 }
 
+Widget buildRevolutionButton({
+  required bool active,
+  required bool enabled,
+  required VoidCallback onPressed,
+}) {
+  return OutlinedButton.icon(
+    onPressed: enabled ? onPressed : null,
+    icon: const Icon(Icons.swap_vert),
+    label: Text(active ? 'revolution 已启动：本轮比小' : 'revolution：本轮改成比小'),
+    style: OutlinedButton.styleFrom(
+      foregroundColor: active ? const Color(0xFFE09F3E) : const Color(0xFF2E7D6F),
+      side: BorderSide(
+        color: active ? const Color(0xFFE09F3E) : const Color(0xFF2E7D6F),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+    ),
+  );
+}
+
 Widget buildScoreBoard(List<ScoreLine> scores) {
   return Card(
     child: Padding(
@@ -621,6 +667,7 @@ class OnlineRoundResult {
     required this.pool,
     required this.winnerIds,
     required this.reason,
+    required this.revolution,
   });
 
   final int round;
@@ -628,6 +675,7 @@ class OnlineRoundResult {
   final int pool;
   final List<String> winnerIds;
   final String reason;
+  final bool revolution;
 
   Map<String, dynamic> toJson() => {
         'round': round,
@@ -635,6 +683,7 @@ class OnlineRoundResult {
         'pool': pool,
         'winnerIds': winnerIds,
         'reason': reason,
+        'revolution': revolution,
       };
 
   factory OnlineRoundResult.fromJson(Map<String, dynamic> json) {
@@ -644,6 +693,7 @@ class OnlineRoundResult {
       pool: json['pool'] as int,
       winnerIds: List<String>.from(json['winnerIds'] as List),
       reason: json['reason'] as String,
+      revolution: (json['revolution'] as bool?) ?? false,
     );
   }
 }
@@ -656,6 +706,7 @@ class OnlineRoomState {
     this.round = 1,
     this.currentPlayerIndex = 0,
     this.lastSingleWinnerId,
+    this.revolutionRound = false,
     Map<String, int>? currentPlays,
     this.latestResult,
   }) : currentPlays = currentPlays ?? {};
@@ -665,6 +716,7 @@ class OnlineRoomState {
   int round;
   int currentPlayerIndex;
   String? lastSingleWinnerId;
+  bool revolutionRound;
   List<OnlinePlayer> players;
   Map<String, int> currentPlays;
   OnlineRoundResult? latestResult;
@@ -675,6 +727,7 @@ class OnlineRoomState {
         'round': round,
         'currentPlayerIndex': currentPlayerIndex,
         'lastSingleWinnerId': lastSingleWinnerId,
+        'revolutionRound': revolutionRound,
         'players': players.map((player) => player.toJson()).toList(),
         'currentPlays': currentPlays,
         'latestResult': latestResult?.toJson(),
@@ -687,6 +740,7 @@ class OnlineRoomState {
       round: json['round'] as int,
       currentPlayerIndex: json['currentPlayerIndex'] as int,
       lastSingleWinnerId: json['lastSingleWinnerId'] as String?,
+      revolutionRound: (json['revolutionRound'] as bool?) ?? false,
       players: (json['players'] as List<dynamic>)
           .map((item) => OnlinePlayer.fromJson(Map<String, dynamic>.from(item as Map)))
           .toList(),
@@ -990,6 +1044,17 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       room!.currentPlays.clear();
       room!.latestResult = null;
       room!.lastSingleWinnerId = null;
+      room!.revolutionRound = false;
+    });
+    broadcastState();
+  }
+
+  void activateOnlineRevolution() {
+    if (!isHost || room == null) return;
+    if (room!.currentPlays.isNotEmpty || room!.revolutionRound) return;
+
+    setState(() {
+      room!.revolutionRound = true;
     });
     broadcastState();
   }
@@ -1017,11 +1082,17 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     String reason;
 
     if (hasOne && hasNine) {
-      targetNumber = 1;
-      reason = '场上同时出现 1 和 9，本轮 1 获胜';
+      targetNumber = currentRoom.revolutionRound ? 9 : 1;
+      reason = currentRoom.revolutionRound
+          ? 'revolution！场上同时出现 1 和 9，本轮 9 获胜'
+          : '场上同时出现 1 和 9，本轮 1 获胜';
     } else {
-      targetNumber = values.reduce((a, b) => a > b ? a : b);
-      reason = '本轮最大数字是 $targetNumber';
+      targetNumber = currentRoom.revolutionRound
+          ? values.reduce((a, b) => a < b ? a : b)
+          : values.reduce((a, b) => a > b ? a : b);
+      reason = currentRoom.revolutionRound
+          ? 'revolution！本轮最小数字是 $targetNumber'
+          : '本轮最大数字是 $targetNumber';
     }
 
     final candidates = currentRoom.currentPlays.entries
@@ -1054,6 +1125,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       pool: pool,
       winnerIds: winnerIds,
       reason: reason,
+      revolution: currentRoom.revolutionRound,
     );
     currentRoom.currentPlays.clear();
     currentRoom.phase =
@@ -1065,6 +1137,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       room!.round++;
       room!.currentPlayerIndex = 0;
       room!.phase = OnlinePhase.choosing;
+      room!.revolutionRound = false;
       selectedCard = null;
     });
     broadcastState();
@@ -1142,7 +1215,13 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         Text(
           isMyTurn ? '轮到你出牌' : '等待 ${activePlayer.name} 出牌',
           style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-          ),
+        ),
+        const SizedBox(height: 10),
+        buildRevolutionButton(
+          active: room!.revolutionRound,
+          enabled: isHost && room!.currentPlays.isEmpty && !room!.revolutionRound,
+          onPressed: activateOnlineRevolution,
+        ),
         const SizedBox(height: 18),
         if (me != null)
           Wrap(
