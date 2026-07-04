@@ -101,8 +101,8 @@ const skillDefinitions = {
   'chaos': SkillDefinition(
     id: 'chaos',
     name: 'chaos',
-    description: '分数池随机 +/-3',
-    detail: '立刻随机改变本轮分数池：可能 +3，也可能 -3。最终分数池最低不会低于 0，适合打乱稳定局面。',
+    description: '每张牌随机 -1/0/+1',
+    detail: '本轮结算时，每个人出的牌点数都会随机 -1、不变或 +1，最低不低于 1，最高不超过 9。适合打乱大小判断。',
     icon: Icons.casino,
   ),
   'snipe': SkillDefinition(
@@ -472,16 +472,24 @@ class _GamePageState extends State<GamePage> {
       }
     }
 
+    if (currentChaosDeltas.isNotEmpty) {
+      final random = Random();
+      final chaosNotes = <String>[];
+      for (final playerIndex in effectivePlays.keys.toList()) {
+        final oldValue = effectivePlays[playerIndex]!;
+        final delta = random.nextInt(3) - 1;
+        final newValue = (oldValue + delta).clamp(1, 9).toInt();
+        effectivePlays[playerIndex] = newValue;
+        chaosNotes.add('${players[playerIndex].name} $oldValue→$newValue');
+      }
+      notes.add('chaos：${chaosNotes.join('、')}');
+    }
+
     final rawPool = effectivePlays.values.fold<int>(
       0,
       (sum, card) => sum + card,
     );
-    final pool = max(0, rawPool + currentChaosDelta);
-    if (currentChaosDelta != 0) {
-      notes.add(
-        'chaos：分数池 ${currentChaosDelta > 0 ? '+' : ''}$currentChaosDelta',
-      );
-    }
+    final pool = max(0, rawPool);
 
     final values = effectivePlays.values.toList();
     final hasOne = values.contains(1);
@@ -639,10 +647,7 @@ class _GamePageState extends State<GamePage> {
     currentSilenceOwners.removeWhere((_, owner) => owner == targetIndex);
 
     currentChaosDeltas.remove(targetIndex);
-    currentChaosDelta = currentChaosDeltas.values.fold<int>(
-      0,
-      (sum, value) => sum + value,
-    );
+    currentChaosDelta = currentChaosDeltas.length;
 
     if (target.usedSkills.contains('loan') &&
         target.loanStartRound == round &&
@@ -762,7 +767,7 @@ class _GamePageState extends State<GamePage> {
       'last_word' => player.lastWordActive,
       'ambush' => player.ambushNumber != null,
       'snipe' => player.snipeNumber != null,
-      'chaos' => currentChaosDelta != 0,
+      'chaos' => currentChaosDeltas.isNotEmpty,
       'lock' => currentLocks.isNotEmpty,
       'silence' => currentSilenced.isNotEmpty,
       _ => false,
@@ -824,13 +829,8 @@ class _GamePageState extends State<GamePage> {
       case 'chaos':
         setState(() {
           markLocalSkillUsed(player, skillId);
-          final delta = Random().nextBool() ? 3 : -3;
-          currentChaosDeltas[currentPlayer] =
-              (currentChaosDeltas[currentPlayer] ?? 0) + delta;
-          currentChaosDelta = currentChaosDeltas.values.fold<int>(
-            0,
-            (sum, value) => sum + value,
-          );
+          currentChaosDeltas[currentPlayer] = 1;
+          currentChaosDelta = currentChaosDeltas.length;
         });
         break;
       case 'snipe':
@@ -1442,8 +1442,7 @@ class _GamePageState extends State<GamePage> {
         'ambush：猜 ${player.ambushNumber}，中了 +${player.ambushBonus}',
       if (player.snipeTargetIndex != null && player.snipeNumber != null)
         'snipe：猜 ${players[player.snipeTargetIndex!].name} 出 ${player.snipeNumber}',
-      if (currentChaosDelta != 0)
-        'chaos：分数池 ${currentChaosDelta > 0 ? '+' : ''}$currentChaosDelta',
+      if (currentChaosDeltas.isNotEmpty) 'chaos：本轮每张牌随机 -1/0/+1',
       if (localLockText().isNotEmpty) localLockText(),
     ];
     return items.join('；');
@@ -2451,14 +2450,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         silenceOnlinePlayer(targetId: targetId, sourceId: id);
         break;
       case 'chaos':
-        final delta = payload['delta'] as int?;
-        if (delta != 3 && delta != -3) return;
         player.usedSkills.add(type);
-        room!.chaosDeltas[id] = (room!.chaosDeltas[id] ?? 0) + delta!;
-        room!.chaosDelta = room!.chaosDeltas.values.fold<int>(
-          0,
-          (sum, value) => sum + value,
-        );
+        room!.chaosDeltas[id] = 1;
+        room!.chaosDelta = room!.chaosDeltas.length;
         break;
       case 'snipe':
         final targetId = payload['targetId'] as String?;
@@ -2521,10 +2515,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     room!.silenceOwners.removeWhere((_, owner) => owner == targetId);
 
     room!.chaosDeltas.remove(targetId);
-    room!.chaosDelta = room!.chaosDeltas.values.fold<int>(
-      0,
-      (sum, value) => sum + value,
-    );
+    room!.chaosDelta = room!.chaosDeltas.length;
 
     if (target.usedSkills.contains('loan') &&
         target.loanStartRound == room!.round &&
@@ -2627,7 +2618,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       'last_word' => me.lastWordActive,
       'ambush' => me.ambushNumber != null,
       'snipe' => me.snipeNumber != null,
-      'chaos' => room!.chaosDelta != 0,
+      'chaos' => room!.chaosDeltas.isNotEmpty,
       'lock' => room!.lockedCards.isNotEmpty,
       'silence' => room!.silencedPlayers.isNotEmpty,
       _ => false,
@@ -2656,11 +2647,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         await sendSkill({'id': playerId, 'type': skillId});
         break;
       case 'chaos':
-        await sendSkill({
-          'id': playerId,
-          'type': skillId,
-          'delta': Random().nextBool() ? 3 : -3,
-        });
+        await sendSkill({'id': playerId, 'type': skillId});
         break;
       case 'loan':
         await sendSkill({'id': playerId, 'type': skillId});
@@ -3011,16 +2998,27 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       }
     }
 
+    if (currentRoom.chaosDeltas.isNotEmpty) {
+      final random = Random();
+      final chaosNotes = <String>[];
+      for (final playerId in effectivePlays.keys.toList()) {
+        final player = currentRoom.players.firstWhere(
+          (item) => item.id == playerId,
+        );
+        final oldValue = effectivePlays[playerId]!;
+        final delta = random.nextInt(3) - 1;
+        final newValue = (oldValue + delta).clamp(1, 9).toInt();
+        effectivePlays[playerId] = newValue;
+        chaosNotes.add('${player.name} $oldValue→$newValue');
+      }
+      notes.add('chaos：${chaosNotes.join('、')}');
+    }
+
     final rawPool = effectivePlays.values.fold<int>(
       0,
       (sum, card) => sum + card,
     );
-    final pool = max(0, rawPool + currentRoom.chaosDelta);
-    if (currentRoom.chaosDelta != 0) {
-      notes.add(
-        'chaos：分数池 ${currentRoom.chaosDelta > 0 ? '+' : ''}${currentRoom.chaosDelta}',
-      );
-    }
+    final pool = max(0, rawPool);
 
     final values = effectivePlays.values.toList();
     final hasOne = values.contains(1);
@@ -3492,8 +3490,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         'ambush：猜 ${player.ambushNumber}，中了 +${player.ambushBonus}',
       if (player.snipeTargetId != null && player.snipeNumber != null)
         'snipe：猜 ${playerNameById(player.snipeTargetId!)} 出 ${player.snipeNumber}',
-      if (room!.chaosDelta != 0)
-        'chaos：分数池 ${room!.chaosDelta > 0 ? '+' : ''}${room!.chaosDelta}',
+      if (room!.chaosDeltas.isNotEmpty) 'chaos：本轮每张牌随机 -1/0/+1',
       if (onlineLockText().isNotEmpty) onlineLockText(),
     ];
     return items.join('；');
