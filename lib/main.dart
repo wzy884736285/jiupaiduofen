@@ -15,6 +15,129 @@ const supabaseKey = String.fromEnvironment(
 );
 const hasSupabaseConfig = supabaseUrl != '' && supabaseKey != '';
 
+const skillDeck = [
+  'revolution',
+  'double',
+  'lock',
+  'peek',
+  'ambush',
+  'mirror',
+  'tax',
+  'insurance',
+  'silence',
+  'chaos',
+  'snipe',
+  'anchor',
+  'loan',
+  'last_word',
+];
+
+const skillDefinitions = {
+  'revolution': SkillDefinition(
+    id: 'revolution',
+    name: 'revolution',
+    description: '本轮改成比小',
+    icon: Icons.swap_vert,
+  ),
+  'double': SkillDefinition(
+    id: 'double',
+    name: 'double',
+    description: '赢了得分翻倍',
+    icon: Icons.close_fullscreen,
+  ),
+  'lock': SkillDefinition(
+    id: 'lock',
+    name: 'lock',
+    description: '禁别人一个数字',
+    icon: Icons.block,
+  ),
+  'peek': SkillDefinition(
+    id: 'peek',
+    name: 'peek',
+    description: '偷看已出的牌',
+    icon: Icons.visibility,
+  ),
+  'ambush': SkillDefinition(
+    id: 'ambush',
+    name: 'ambush',
+    description: '猜中数字 +3',
+    icon: Icons.radar,
+  ),
+  'mirror': SkillDefinition(
+    id: 'mirror',
+    name: 'mirror',
+    description: '点数变成 10-x',
+    icon: Icons.flip,
+  ),
+  'tax': SkillDefinition(
+    id: 'tax',
+    name: 'tax',
+    description: '从赢家拿 2 分',
+    icon: Icons.account_balance,
+  ),
+  'insurance': SkillDefinition(
+    id: 'insurance',
+    name: 'insurance',
+    description: '没赢得 +3',
+    icon: Icons.health_and_safety,
+  ),
+  'silence': SkillDefinition(
+    id: 'silence',
+    name: 'silence',
+    description: '禁别人本轮技能',
+    icon: Icons.volume_off,
+  ),
+  'chaos': SkillDefinition(
+    id: 'chaos',
+    name: 'chaos',
+    description: '分数池随机 +/-3',
+    icon: Icons.casino,
+  ),
+  'snipe': SkillDefinition(
+    id: 'snipe',
+    name: 'snipe',
+    description: '猜中某人 +5',
+    icon: Icons.center_focus_strong,
+  ),
+  'anchor': SkillDefinition(
+    id: 'anchor',
+    name: 'anchor',
+    description: '本轮免疫干扰',
+    icon: Icons.anchor,
+  ),
+  'loan': SkillDefinition(
+    id: 'loan',
+    name: 'loan',
+    description: '立刻 +6，后扣',
+    icon: Icons.payments,
+  ),
+  'last_word': SkillDefinition(
+    id: 'last_word',
+    name: 'last word',
+    description: '并列时优先赢',
+    icon: Icons.record_voice_over,
+  ),
+};
+
+class SkillDefinition {
+  const SkillDefinition({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.icon,
+  });
+
+  final String id;
+  final String name;
+  final String description;
+  final IconData icon;
+}
+
+List<String> drawSkillHand(Random random) {
+  final deck = [...skillDeck]..shuffle(random);
+  return deck.take(3).toList();
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -115,11 +238,19 @@ class Player {
   final String name;
   double score = 0;
   final Set<int> usedCards = {};
-  bool revolutionUsed = false;
-  bool doubleUsed = false;
+  List<String> skillHand = [];
+  final Set<String> usedSkills = {};
   bool doubleActive = false;
-  bool lockUsed = false;
-  bool peekUsed = false;
+  bool mirrorActive = false;
+  bool taxActive = false;
+  bool insuranceActive = false;
+  bool anchorActive = false;
+  bool lastWordActive = false;
+  int? ambushNumber;
+  int? snipeTargetIndex;
+  int? snipeNumber;
+  int loanDebtRounds = 0;
+  int loanStartRound = 0;
   int lossStreak = 0;
 }
 
@@ -159,6 +290,8 @@ class _GamePageState extends State<GamePage> {
   int? lastSingleWinner;
   bool revolutionRound = false;
   final Map<int, int> currentLocks = {};
+  final Set<int> currentSilenced = {};
+  int currentChaosDelta = 0;
 
   final nameControllers = List.generate(
     5,
@@ -171,13 +304,18 @@ class _GamePageState extends State<GamePage> {
   RoundResult? latestResult;
 
   void startGame() {
+    final random = Random();
     players = List.generate(
       playerCount,
-      (index) => Player(
-        nameControllers[index].text.trim().isEmpty
-            ? '玩家${index + 1}'
-            : nameControllers[index].text.trim(),
-      ),
+      (index) {
+        final player = Player(
+          nameControllers[index].text.trim().isEmpty
+              ? '玩家${index + 1}'
+              : nameControllers[index].text.trim(),
+        );
+        player.skillHand = drawSkillHand(random);
+        return player;
+      },
     );
 
     setState(() {
@@ -188,6 +326,8 @@ class _GamePageState extends State<GamePage> {
       lastSingleWinner = null;
       revolutionRound = false;
       currentLocks.clear();
+      currentSilenced.clear();
+      currentChaosDelta = 0;
       currentPlays.clear();
       history.clear();
       latestResult = null;
@@ -211,8 +351,24 @@ class _GamePageState extends State<GamePage> {
   }
 
   void finishRound() {
-    final pool = currentPlays.values.fold<int>(0, (sum, card) => sum + card);
-    final values = currentPlays.values.toList();
+    final notes = <String>[];
+    final effectivePlays = <int, int>{};
+    for (final entry in currentPlays.entries) {
+      final player = players[entry.key];
+      final value = player.mirrorActive ? 10 - entry.value : entry.value;
+      effectivePlays[entry.key] = value;
+      if (player.mirrorActive) {
+        notes.add('mirror：${player.name} 的 ${entry.value} 变成 $value');
+      }
+    }
+
+    final rawPool = effectivePlays.values.fold<int>(0, (sum, card) => sum + card);
+    final pool = max(0, rawPool + currentChaosDelta);
+    if (currentChaosDelta != 0) {
+      notes.add('chaos：分数池 ${currentChaosDelta > 0 ? '+' : ''}$currentChaosDelta');
+    }
+
+    final values = effectivePlays.values.toList();
     final hasOne = values.contains(1);
     final hasNine = values.contains(9);
 
@@ -233,14 +389,19 @@ class _GamePageState extends State<GamePage> {
           : '本轮最大数字是 $targetNumber';
     }
 
-    final candidates = currentPlays.entries
+    final candidates = effectivePlays.entries
         .where((entry) => entry.value == targetNumber)
         .map((entry) => entry.key)
         .toList();
 
     List<int> winners;
 
-    if (candidates.length == 1) {
+    final lastWordCandidates =
+        candidates.where((index) => players[index].lastWordActive).toList();
+    if (lastWordCandidates.isNotEmpty) {
+      winners = [lastWordCandidates.first];
+      reason = '$reason；last word：${players[winners.first].name} 并列优先';
+    } else if (candidates.length == 1) {
       winners = candidates;
     } else if (lastSingleWinner != null &&
         candidates.contains(lastSingleWinner)) {
@@ -252,12 +413,43 @@ class _GamePageState extends State<GamePage> {
     }
 
     final gain = pool / winners.length;
-    final notes = <String>[];
     for (final winner in winners) {
       final multiplier = players[winner].doubleActive ? 2 : 1;
       players[winner].score += gain * multiplier;
       if (multiplier == 2) {
         notes.add('double：${players[winner].name} 得分翻倍');
+      }
+    }
+
+    for (int i = 0; i < players.length; i++) {
+      final player = players[i];
+      if (player.ambushNumber != null &&
+          currentPlays.values.contains(player.ambushNumber)) {
+        player.score += 3;
+        notes.add('ambush：${player.name} +3');
+      }
+
+      if (player.snipeTargetIndex != null &&
+          player.snipeNumber != null &&
+          currentPlays[player.snipeTargetIndex] == player.snipeNumber) {
+        player.score += 5;
+        notes.add('snipe：${player.name} +5');
+      }
+
+      if (player.insuranceActive && !winners.contains(i)) {
+        player.score += 3;
+        notes.add('insurance：${player.name} +3');
+      }
+    }
+
+    for (int i = 0; i < players.length; i++) {
+      final player = players[i];
+      if (!player.taxActive) continue;
+      for (final winner in winners) {
+        if (winner == i) continue;
+        players[winner].score -= 2;
+        player.score += 2;
+        notes.add('tax：${player.name} 从 ${players[winner].name} 拿 2 分');
       }
     }
 
@@ -272,7 +464,12 @@ class _GamePageState extends State<GamePage> {
           compensation.add('${players[i].name} +2');
         }
       }
-      players[i].doubleActive = false;
+      if (players[i].loanDebtRounds > 0 && players[i].loanStartRound < round) {
+        players[i].score -= 2;
+        players[i].loanDebtRounds--;
+        notes.add('loan：${players[i].name} -2');
+      }
+      clearLocalRoundSkills(players[i]);
     }
     if (compensation.isNotEmpty) {
       notes.add('连输补偿：${compensation.join('、')}');
@@ -294,6 +491,18 @@ class _GamePageState extends State<GamePage> {
     phase = round == 9 ? Phase.finished : Phase.reveal;
   }
 
+  void clearLocalRoundSkills(Player player) {
+    player.doubleActive = false;
+    player.mirrorActive = false;
+    player.taxActive = false;
+    player.insuranceActive = false;
+    player.anchorActive = false;
+    player.lastWordActive = false;
+    player.ambushNumber = null;
+    player.snipeTargetIndex = null;
+    player.snipeNumber = null;
+  }
+
   void nextRound() {
     setState(() {
       round++;
@@ -301,6 +510,8 @@ class _GamePageState extends State<GamePage> {
       selectedCard = null;
       revolutionRound = false;
       currentLocks.clear();
+      currentSilenced.clear();
+      currentChaosDelta = 0;
       phase = Phase.choosing;
     });
   }
@@ -318,36 +529,151 @@ class _GamePageState extends State<GamePage> {
       lastSingleWinner = null;
       revolutionRound = false;
       currentLocks.clear();
+      currentSilenced.clear();
+      currentChaosDelta = 0;
     });
   }
 
-  void activateRevolution() {
+  bool localSkillEnabled(String skillId) {
     final player = players[currentPlayer];
-    if (player.revolutionUsed || revolutionRound) return;
-
-    setState(() {
-      revolutionRound = true;
-      player.revolutionUsed = true;
-    });
+    if (!player.skillHand.contains(skillId) || player.usedSkills.contains(skillId)) {
+      return false;
+    }
+    if (currentSilenced.contains(currentPlayer) && skillId != 'anchor') {
+      return false;
+    }
+    return switch (skillId) {
+      'revolution' => !revolutionRound,
+      'double' => !player.doubleActive,
+      'lock' => true,
+      'peek' => currentPlays.isNotEmpty,
+      'ambush' => true,
+      'mirror' => !player.mirrorActive,
+      'tax' => !player.taxActive,
+      'insurance' => !player.insuranceActive,
+      'silence' => true,
+      'chaos' => true,
+      'snipe' => true,
+      'anchor' => !player.anchorActive,
+      'loan' => player.loanDebtRounds == 0,
+      'last_word' => !player.lastWordActive,
+      _ => false,
+    };
   }
 
-  void activateDouble() {
+  bool localSkillActive(String skillId) {
     final player = players[currentPlayer];
-    if (player.doubleUsed || player.doubleActive) return;
+    return switch (skillId) {
+      'revolution' => revolutionRound,
+      'double' => player.doubleActive,
+      'mirror' => player.mirrorActive,
+      'tax' => player.taxActive,
+      'insurance' => player.insuranceActive,
+      'anchor' => player.anchorActive,
+      'last_word' => player.lastWordActive,
+      'ambush' => player.ambushNumber != null,
+      'snipe' => player.snipeNumber != null,
+      'chaos' => currentChaosDelta != 0,
+      'lock' => currentLocks.isNotEmpty,
+      'silence' => currentSilenced.isNotEmpty,
+      _ => false,
+    };
+  }
 
-    setState(() {
-      player.doubleUsed = true;
-      player.doubleActive = true;
-    });
+  void markLocalSkillUsed(Player player, String skillId) {
+    player.usedSkills.add(skillId);
+  }
+
+  Future<void> useLocalSkill(String skillId) async {
+    if (!localSkillEnabled(skillId)) return;
+    final player = players[currentPlayer];
+
+    switch (skillId) {
+      case 'revolution':
+        setState(() {
+          markLocalSkillUsed(player, skillId);
+          revolutionRound = true;
+        });
+        break;
+      case 'double':
+        setState(() {
+          markLocalSkillUsed(player, skillId);
+          player.doubleActive = true;
+        });
+        break;
+      case 'lock':
+        await activateLock();
+        break;
+      case 'peek':
+        await activatePeek();
+        break;
+      case 'ambush':
+        await activateAmbush();
+        break;
+      case 'mirror':
+        setState(() {
+          markLocalSkillUsed(player, skillId);
+          player.mirrorActive = true;
+        });
+        break;
+      case 'tax':
+        setState(() {
+          markLocalSkillUsed(player, skillId);
+          player.taxActive = true;
+        });
+        break;
+      case 'insurance':
+        setState(() {
+          markLocalSkillUsed(player, skillId);
+          player.insuranceActive = true;
+        });
+        break;
+      case 'silence':
+        await activateSilence();
+        break;
+      case 'chaos':
+        setState(() {
+          markLocalSkillUsed(player, skillId);
+          currentChaosDelta += Random().nextBool() ? 3 : -3;
+        });
+        break;
+      case 'snipe':
+        await activateSnipe();
+        break;
+      case 'anchor':
+        setState(() {
+          markLocalSkillUsed(player, skillId);
+          player.anchorActive = true;
+          currentLocks.remove(currentPlayer);
+          currentSilenced.remove(currentPlayer);
+        });
+        break;
+      case 'loan':
+        setState(() {
+          markLocalSkillUsed(player, skillId);
+          player.score += 6;
+          player.loanDebtRounds = 3;
+          player.loanStartRound = round;
+        });
+        break;
+      case 'last_word':
+        setState(() {
+          markLocalSkillUsed(player, skillId);
+          player.lastWordActive = true;
+        });
+        break;
+    }
   }
 
   Future<void> activateLock() async {
     final player = players[currentPlayer];
-    if (player.lockUsed) return;
 
     final targets = [
       for (int i = 0; i < players.length; i++)
-        if (i != currentPlayer && !currentPlays.containsKey(i)) i,
+        if (i != currentPlayer &&
+            !currentPlays.containsKey(i) &&
+            !players[i].anchorActive)
+          i,
     ];
     if (targets.isEmpty) {
       showMessage('没有可以锁定的玩家');
@@ -405,14 +731,13 @@ class _GamePageState extends State<GamePage> {
 
     if (result == null) return;
     setState(() {
-      player.lockUsed = true;
+      markLocalSkillUsed(player, 'lock');
       currentLocks[result.$1] = result.$2;
     });
   }
 
   Future<void> activatePeek() async {
     final player = players[currentPlayer];
-    if (player.peekUsed) return;
 
     final targets = currentPlays.keys.toList();
     if (targets.isEmpty) {
@@ -421,7 +746,7 @@ class _GamePageState extends State<GamePage> {
     }
 
     setState(() {
-      player.peekUsed = true;
+      markLocalSkillUsed(player, 'peek');
     });
 
     await showDialog<void>(
@@ -447,6 +772,179 @@ class _GamePageState extends State<GamePage> {
             child: const Text('知道了'),
           ),
         ],
+      ),
+    );
+  }
+
+  Future<void> activateAmbush() async {
+    final player = players[currentPlayer];
+    final number = await chooseNumberDialog('ambush', '猜一个会出现的数字');
+    if (number == null) return;
+
+    setState(() {
+      markLocalSkillUsed(player, 'ambush');
+      player.ambushNumber = number;
+    });
+  }
+
+  Future<void> activateSnipe() async {
+    final player = players[currentPlayer];
+    final targets = [
+      for (int i = 0; i < players.length; i++)
+        if (i != currentPlayer) i,
+    ];
+    if (targets.isEmpty) return;
+
+    final result = await chooseTargetAndNumberDialog(
+      title: 'snipe',
+      targetIndexes: targets,
+      targetName: (index) => players[index].name,
+    );
+    if (result == null) return;
+
+    setState(() {
+      markLocalSkillUsed(player, 'snipe');
+      player.snipeTargetIndex = result.$1;
+      player.snipeNumber = result.$2;
+    });
+  }
+
+  Future<void> activateSilence() async {
+    final player = players[currentPlayer];
+    final targets = [
+      for (int i = 0; i < players.length; i++)
+        if (i != currentPlayer &&
+            !currentPlays.containsKey(i) &&
+            !players[i].anchorActive)
+          i,
+    ];
+    if (targets.isEmpty) {
+      showMessage('没有可以禁技的玩家');
+      return;
+    }
+
+    var target = targets.first;
+    final result = await showDialog<int>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('silence'),
+          content: DropdownButtonFormField<int>(
+            initialValue: target,
+            decoration: const InputDecoration(labelText: '禁技玩家'),
+            items: [
+              for (final index in targets)
+                DropdownMenuItem(value: index, child: Text(players[index].name)),
+            ],
+            onChanged: (value) {
+              if (value != null) setDialogState(() => target = value);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(target),
+              child: const Text('确认'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    setState(() {
+      markLocalSkillUsed(player, 'silence');
+      currentSilenced.add(result);
+    });
+  }
+
+  Future<int?> chooseNumberDialog(String title, String label) async {
+    var number = 5;
+    return showDialog<int>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(title),
+          content: DropdownButtonFormField<int>(
+            initialValue: number,
+            decoration: InputDecoration(labelText: label),
+            items: [
+              for (int i = 1; i <= 9; i++)
+                DropdownMenuItem(value: i, child: Text('$i')),
+            ],
+            onChanged: (value) {
+              if (value != null) setDialogState(() => number = value);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(number),
+              child: const Text('确认'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<(int, int)?> chooseTargetAndNumberDialog({
+    required String title,
+    required List<int> targetIndexes,
+    required String Function(int index) targetName,
+  }) async {
+    var target = targetIndexes.first;
+    var number = 5;
+    return showDialog<(int, int)>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<int>(
+                initialValue: target,
+                decoration: const InputDecoration(labelText: '选择玩家'),
+                items: [
+                  for (final index in targetIndexes)
+                    DropdownMenuItem(value: index, child: Text(targetName(index))),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => target = value);
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                initialValue: number,
+                decoration: const InputDecoration(labelText: '选择数字'),
+                items: [
+                  for (int i = 1; i <= 9; i++)
+                    DropdownMenuItem(value: i, child: Text('$i')),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => number = value);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop((target, number)),
+              child: const Text('确认'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -530,22 +1028,18 @@ class _GamePageState extends State<GamePage> {
         Text('请 ${player.name} 出牌',
             style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
         const SizedBox(height: 10),
-        buildSkillPanel(
-          revolutionActive: revolutionRound,
-          revolutionUsed: player.revolutionUsed,
-          revolutionEnabled: !player.revolutionUsed && !revolutionRound,
-          onRevolution: activateRevolution,
-          doubleActive: player.doubleActive,
-          doubleUsed: player.doubleUsed,
-          doubleEnabled: !player.doubleUsed,
-          onDouble: activateDouble,
-          lockUsed: player.lockUsed,
-          lockEnabled: !player.lockUsed,
-          onLock: activateLock,
-          peekUsed: player.peekUsed,
-          peekEnabled: !player.peekUsed && currentPlays.isNotEmpty,
-          onPeek: activatePeek,
-          lockText: localLockText(),
+        buildSkillHandPanel(
+          cards: [
+            for (final skillId in player.skillHand)
+              SkillButtonData(
+                definition: skillDefinitions[skillId]!,
+                active: localSkillActive(skillId),
+                used: player.usedSkills.contains(skillId),
+                enabled: localSkillEnabled(skillId),
+                onPressed: () => useLocalSkill(skillId),
+              ),
+          ],
+          statusText: localSkillStatusText(player),
         ),
         const SizedBox(height: 18),
         Wrap(
@@ -683,6 +1177,26 @@ class _GamePageState extends State<GamePage> {
         .map((entry) => '${players[entry.key].name} 不能出 ${entry.value}')
         .join('；');
   }
+
+  String localSkillStatusText(Player player) {
+    final items = [
+      if (currentSilenced.contains(currentPlayer)) '你本轮被 silence，不能用技能',
+      if (revolutionRound) 'revolution：本轮比小',
+      if (player.doubleActive) 'double：赢了得分翻倍',
+      if (player.mirrorActive) 'mirror：点数变成 10-x',
+      if (player.taxActive) 'tax：从赢家拿 2 分',
+      if (player.insuranceActive) 'insurance：没赢 +3',
+      if (player.anchorActive) 'anchor：本轮免疫干扰',
+      if (player.lastWordActive) 'last word：并列优先',
+      if (player.ambushNumber != null) 'ambush：猜 ${player.ambushNumber}',
+      if (player.snipeTargetIndex != null && player.snipeNumber != null)
+        'snipe：猜 ${players[player.snipeTargetIndex!].name} 出 ${player.snipeNumber}',
+      if (currentChaosDelta != 0)
+        'chaos：分数池 ${currentChaosDelta > 0 ? '+' : ''}$currentChaosDelta',
+      if (localLockText().isNotEmpty) localLockText(),
+    ];
+    return items.join('；');
+  }
 }
 
 class ScoreLine {
@@ -699,22 +1213,25 @@ class CardMemoryLine {
   final List<int> cards;
 }
 
-Widget buildSkillPanel({
-  required bool revolutionActive,
-  required bool revolutionUsed,
-  required bool revolutionEnabled,
-  required VoidCallback onRevolution,
-  required bool doubleActive,
-  required bool doubleUsed,
-  required bool doubleEnabled,
-  required VoidCallback onDouble,
-  required bool lockUsed,
-  required bool lockEnabled,
-  required VoidCallback onLock,
-  required bool peekUsed,
-  required bool peekEnabled,
-  required VoidCallback onPeek,
-  required String lockText,
+class SkillButtonData {
+  const SkillButtonData({
+    required this.definition,
+    required this.active,
+    required this.used,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final SkillDefinition definition;
+  final bool active;
+  final bool used;
+  final bool enabled;
+  final VoidCallback onPressed;
+}
+
+Widget buildSkillHandPanel({
+  required List<SkillButtonData> cards,
+  required String statusText,
 }) {
   return Card(
     child: Padding(
@@ -729,60 +1246,26 @@ Widget buildSkillPanel({
             spacing: 8,
             runSpacing: 8,
             children: [
-              buildSkillButton(
-                icon: Icons.swap_vert,
-                label: switch ((revolutionActive, revolutionUsed)) {
-                  (true, _) => 'revolution 已启动',
-                  (false, true) => 'revolution 已用',
-                  _ => 'revolution',
-                },
-                description: '本轮改成比小',
-                active: revolutionActive,
-                used: revolutionUsed,
-                enabled: revolutionEnabled,
-                onPressed: onRevolution,
-              ),
-              buildSkillButton(
-                icon: Icons.close_fullscreen,
-                label: switch ((doubleActive, doubleUsed)) {
-                  (true, _) => 'double 已启动',
-                  (false, true) => 'double 已用',
-                  _ => 'double',
-                },
-                description: '赢了得分翻倍',
-                active: doubleActive,
-                used: doubleUsed,
-                enabled: doubleEnabled,
-                onPressed: onDouble,
-              ),
-              buildSkillButton(
-                icon: Icons.block,
-                label: lockUsed ? 'lock 已用' : 'lock',
-                description: '禁别人一个数字',
-                active: lockText.isNotEmpty,
-                used: lockUsed,
-                enabled: lockEnabled,
-                onPressed: onLock,
-              ),
-              buildSkillButton(
-                icon: Icons.visibility,
-                label: peekUsed ? 'peek 已用' : 'peek',
-                description: '偷看已出的牌',
-                active: false,
-                used: peekUsed,
-                enabled: peekEnabled,
-                onPressed: onPeek,
-              ),
+              for (final card in cards)
+                buildSkillButton(
+                  icon: card.definition.icon,
+                  label: card.used
+                      ? '${card.definition.name} 已用'
+                      : card.active
+                          ? '${card.definition.name} 已启动'
+                          : card.definition.name,
+                  description: card.definition.description,
+                  active: card.active,
+                  used: card.used,
+                  enabled: card.enabled,
+                  onPressed: card.onPressed,
+                ),
             ],
           ),
-          if (revolutionActive || doubleActive || lockText.isNotEmpty) ...[
+          if (statusText.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
-              [
-                if (revolutionActive) '本轮比小',
-                if (doubleActive) '本轮获胜得分翻倍',
-                if (lockText.isNotEmpty) lockText,
-              ].join('；'),
+              statusText,
               style: const TextStyle(color: Colors.black54),
             ),
           ],
@@ -940,23 +1423,41 @@ class OnlinePlayer {
     required this.id,
     required this.name,
     this.score = 0,
-    this.revolutionUsed = false,
-    this.doubleUsed = false,
+    List<String>? skillHand,
+    Set<String>? usedSkills,
     this.doubleActive = false,
-    this.lockUsed = false,
-    this.peekUsed = false,
+    this.mirrorActive = false,
+    this.taxActive = false,
+    this.insuranceActive = false,
+    this.anchorActive = false,
+    this.lastWordActive = false,
+    this.ambushNumber,
+    this.snipeTargetId,
+    this.snipeNumber,
+    this.loanDebtRounds = 0,
+    this.loanStartRound = 0,
     this.lossStreak = 0,
     Set<int>? usedCards,
-  }) : usedCards = usedCards ?? {};
+  })  : skillHand = skillHand ?? [],
+        usedSkills = usedSkills ?? {},
+        usedCards = usedCards ?? {};
 
   final String id;
   final String name;
   double score;
-  bool revolutionUsed;
-  bool doubleUsed;
+  List<String> skillHand;
+  Set<String> usedSkills;
   bool doubleActive;
-  bool lockUsed;
-  bool peekUsed;
+  bool mirrorActive;
+  bool taxActive;
+  bool insuranceActive;
+  bool anchorActive;
+  bool lastWordActive;
+  int? ambushNumber;
+  String? snipeTargetId;
+  int? snipeNumber;
+  int loanDebtRounds;
+  int loanStartRound;
   int lossStreak;
   final Set<int> usedCards;
 
@@ -964,11 +1465,19 @@ class OnlinePlayer {
         'id': id,
         'name': name,
         'score': score,
-        'revolutionUsed': revolutionUsed,
-        'doubleUsed': doubleUsed,
+        'skillHand': skillHand,
+        'usedSkills': usedSkills.toList(),
         'doubleActive': doubleActive,
-        'lockUsed': lockUsed,
-        'peekUsed': peekUsed,
+        'mirrorActive': mirrorActive,
+        'taxActive': taxActive,
+        'insuranceActive': insuranceActive,
+        'anchorActive': anchorActive,
+        'lastWordActive': lastWordActive,
+        'ambushNumber': ambushNumber,
+        'snipeTargetId': snipeTargetId,
+        'snipeNumber': snipeNumber,
+        'loanDebtRounds': loanDebtRounds,
+        'loanStartRound': loanStartRound,
         'lossStreak': lossStreak,
         'usedCards': usedCards.toList(),
       };
@@ -978,11 +1487,20 @@ class OnlinePlayer {
       id: json['id'] as String,
       name: json['name'] as String,
       score: (json['score'] as num).toDouble(),
-      revolutionUsed: (json['revolutionUsed'] as bool?) ?? false,
-      doubleUsed: (json['doubleUsed'] as bool?) ?? false,
+      skillHand: List<String>.from((json['skillHand'] as List?) ?? const []),
+      usedSkills:
+          List<String>.from((json['usedSkills'] as List?) ?? const []).toSet(),
       doubleActive: (json['doubleActive'] as bool?) ?? false,
-      lockUsed: (json['lockUsed'] as bool?) ?? false,
-      peekUsed: (json['peekUsed'] as bool?) ?? false,
+      mirrorActive: (json['mirrorActive'] as bool?) ?? false,
+      taxActive: (json['taxActive'] as bool?) ?? false,
+      insuranceActive: (json['insuranceActive'] as bool?) ?? false,
+      anchorActive: (json['anchorActive'] as bool?) ?? false,
+      lastWordActive: (json['lastWordActive'] as bool?) ?? false,
+      ambushNumber: json['ambushNumber'] as int?,
+      snipeTargetId: json['snipeTargetId'] as String?,
+      snipeNumber: json['snipeNumber'] as int?,
+      loanDebtRounds: (json['loanDebtRounds'] as int?) ?? 0,
+      loanStartRound: (json['loanStartRound'] as int?) ?? 0,
       lossStreak: (json['lossStreak'] as int?) ?? 0,
       usedCards:
           ((json['usedCards'] as List<dynamic>?) ?? []).map((item) => item as int).toSet(),
@@ -1039,9 +1557,12 @@ class OnlineRoomState {
     this.revolutionRound = false,
     Map<String, int>? currentPlays,
     Map<String, int>? lockedCards,
+    Set<String>? silencedPlayers,
+    this.chaosDelta = 0,
     this.latestResult,
   })  : currentPlays = currentPlays ?? {},
-        lockedCards = lockedCards ?? {};
+        lockedCards = lockedCards ?? {},
+        silencedPlayers = silencedPlayers ?? {};
 
   OnlinePhase phase;
   int playerCount;
@@ -1052,6 +1573,8 @@ class OnlineRoomState {
   List<OnlinePlayer> players;
   Map<String, int> currentPlays;
   Map<String, int> lockedCards;
+  Set<String> silencedPlayers;
+  int chaosDelta;
   OnlineRoundResult? latestResult;
 
   Map<String, dynamic> toJson() => {
@@ -1064,6 +1587,8 @@ class OnlineRoomState {
         'players': players.map((player) => player.toJson()).toList(),
         'currentPlays': currentPlays,
         'lockedCards': lockedCards,
+        'silencedPlayers': silencedPlayers.toList(),
+        'chaosDelta': chaosDelta,
         'latestResult': latestResult?.toJson(),
       };
 
@@ -1080,6 +1605,9 @@ class OnlineRoomState {
           .toList(),
       currentPlays: Map<String, int>.from(json['currentPlays'] as Map),
       lockedCards: Map<String, int>.from((json['lockedCards'] as Map?) ?? {}),
+      silencedPlayers:
+          List<String>.from((json['silencedPlayers'] as List?) ?? const []).toSet(),
+      chaosDelta: (json['chaosDelta'] as int?) ?? 0,
       latestResult: json['latestResult'] == null
           ? null
           : OnlineRoundResult.fromJson(
@@ -1266,7 +1794,6 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         .onBroadcast(event: 'join', callback: handleJoin)
         .onBroadcast(event: 'state', callback: handleState)
         .onBroadcast(event: 'submit_card', callback: handleSubmitCard)
-        .onBroadcast(event: 'revolution', callback: handleRevolution)
         .onBroadcast(event: 'skill', callback: handleSkill)
         .onBroadcast(event: 'next_round', callback: handleNextRound)
         .onBroadcast(event: 'state_request', callback: handleStateRequest)
@@ -1281,7 +1808,11 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
             phase: OnlinePhase.lobby,
             playerCount: widget.playerCount,
             players: [
-              OnlinePlayer(id: playerId, name: widget.playerName),
+              OnlinePlayer(
+                id: playerId,
+                name: widget.playerName,
+                skillHand: drawSkillHand(Random()),
+              ),
             ],
           );
           broadcastState();
@@ -1309,7 +1840,13 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     if (room!.players.length >= room!.playerCount) return;
 
     setState(() {
-      room!.players.add(OnlinePlayer(id: id, name: name));
+      room!.players.add(
+        OnlinePlayer(
+          id: id,
+          name: name,
+          skillHand: drawSkillHand(Random()),
+        ),
+      );
     });
     broadcastState();
   }
@@ -1351,25 +1888,6 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     broadcastState();
   }
 
-  void handleRevolution(Map<String, dynamic> payload) {
-    if (!isHost || room == null || room!.phase != OnlinePhase.choosing) return;
-
-    final id = payload['id'] as String?;
-    if (id == null || room!.revolutionRound) return;
-
-    final playerIndex = room!.players.indexWhere((player) => player.id == id);
-    if (playerIndex != room!.currentPlayerIndex) return;
-
-    final player = room!.players[playerIndex];
-    if (player.revolutionUsed) return;
-
-    setState(() {
-      player.revolutionUsed = true;
-      room!.revolutionRound = true;
-    });
-    broadcastState();
-  }
-
   void handleSkill(Map<String, dynamic> payload) {
     if (!isHost || room == null || room!.phase != OnlinePhase.choosing) return;
 
@@ -1381,36 +1899,105 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     if (playerIndex != room!.currentPlayerIndex) return;
 
     final player = room!.players[playerIndex];
+    if (!player.skillHand.contains(type) || player.usedSkills.contains(type)) return;
+    if (room!.silencedPlayers.contains(id) && type != 'anchor') return;
 
     switch (type) {
       case 'revolution':
-        if (player.revolutionUsed || room!.revolutionRound) return;
-        player.revolutionUsed = true;
+        if (room!.revolutionRound) return;
+        player.usedSkills.add(type);
         room!.revolutionRound = true;
         break;
       case 'double':
-        if (player.doubleUsed || player.doubleActive) return;
-        player.doubleUsed = true;
+        if (player.doubleActive) return;
+        player.usedSkills.add(type);
         player.doubleActive = true;
         break;
       case 'lock':
         final targetId = payload['targetId'] as String?;
         final card = payload['card'] as int?;
         if (targetId == null || card == null) return;
-        if (player.lockUsed || targetId == id || card < 1 || card > 9) return;
+        if (targetId == id || card < 1 || card > 9) return;
         if (room!.currentPlays.containsKey(targetId)) return;
         final targetIndex = room!.players.indexWhere((item) => item.id == targetId);
-        if (targetIndex == -1 || room!.players[targetIndex].usedCards.contains(card)) {
+        if (targetIndex == -1 ||
+            room!.players[targetIndex].usedCards.contains(card) ||
+            room!.players[targetIndex].anchorActive) {
           return;
         }
-        player.lockUsed = true;
+        player.usedSkills.add(type);
         room!.lockedCards[targetId] = card;
         break;
       case 'peek':
         final targetId = payload['targetId'] as String?;
         if (targetId == null) return;
-        if (player.peekUsed || !room!.currentPlays.containsKey(targetId)) return;
-        player.peekUsed = true;
+        if (!room!.currentPlays.containsKey(targetId)) return;
+        player.usedSkills.add(type);
+        break;
+      case 'ambush':
+        final number = payload['number'] as int?;
+        if (number == null || number < 1 || number > 9) return;
+        player.usedSkills.add(type);
+        player.ambushNumber = number;
+        break;
+      case 'mirror':
+        if (player.mirrorActive) return;
+        player.usedSkills.add(type);
+        player.mirrorActive = true;
+        break;
+      case 'tax':
+        if (player.taxActive) return;
+        player.usedSkills.add(type);
+        player.taxActive = true;
+        break;
+      case 'insurance':
+        if (player.insuranceActive) return;
+        player.usedSkills.add(type);
+        player.insuranceActive = true;
+        break;
+      case 'silence':
+        final targetId = payload['targetId'] as String?;
+        if (targetId == null || targetId == id) return;
+        if (room!.currentPlays.containsKey(targetId)) return;
+        final targetIndex = room!.players.indexWhere((item) => item.id == targetId);
+        if (targetIndex == -1 || room!.players[targetIndex].anchorActive) return;
+        player.usedSkills.add(type);
+        room!.silencedPlayers.add(targetId);
+        break;
+      case 'chaos':
+        final delta = payload['delta'] as int?;
+        if (delta != 3 && delta != -3) return;
+        player.usedSkills.add(type);
+        room!.chaosDelta += delta!;
+        break;
+      case 'snipe':
+        final targetId = payload['targetId'] as String?;
+        final number = payload['number'] as int?;
+        if (targetId == null || number == null || targetId == id) return;
+        if (number < 1 || number > 9) return;
+        if (!room!.players.any((item) => item.id == targetId)) return;
+        player.usedSkills.add(type);
+        player.snipeTargetId = targetId;
+        player.snipeNumber = number;
+        break;
+      case 'anchor':
+        if (player.anchorActive) return;
+        player.usedSkills.add(type);
+        player.anchorActive = true;
+        room!.lockedCards.remove(id);
+        room!.silencedPlayers.remove(id);
+        break;
+      case 'loan':
+        if (player.loanDebtRounds > 0) return;
+        player.usedSkills.add(type);
+        player.score += 6;
+        player.loanDebtRounds = 3;
+        player.loanStartRound = room!.round;
+        break;
+      case 'last_word':
+        if (player.lastWordActive) return;
+        player.usedSkills.add(type);
+        player.lastWordActive = true;
         break;
       default:
         return;
@@ -1450,6 +2037,8 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       room!.currentPlayerIndex = 0;
       room!.currentPlays.clear();
       room!.lockedCards.clear();
+      room!.silencedPlayers.clear();
+      room!.chaosDelta = 0;
       room!.latestResult = null;
       room!.lastSingleWinnerId = null;
       room!.revolutionRound = false;
@@ -1457,38 +2046,144 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     broadcastState();
   }
 
-  void activateOnlineRevolution() {
+  bool onlineSkillEnabled(String skillId) {
     final me = myIndex >= 0 ? room!.players[myIndex] : null;
-    if (!isMyTurn || me == null) return;
-    if (me.revolutionUsed || room!.revolutionRound) return;
+    if (!isMyTurn || me == null) return false;
+    if (!me.skillHand.contains(skillId) || me.usedSkills.contains(skillId)) return false;
+    if (room!.silencedPlayers.contains(me.id) && skillId != 'anchor') return false;
+    return switch (skillId) {
+      'revolution' => !room!.revolutionRound,
+      'double' => !me.doubleActive,
+      'lock' => true,
+      'peek' => room!.currentPlays.isNotEmpty,
+      'ambush' => true,
+      'mirror' => !me.mirrorActive,
+      'tax' => !me.taxActive,
+      'insurance' => !me.insuranceActive,
+      'silence' => true,
+      'chaos' => true,
+      'snipe' => true,
+      'anchor' => !me.anchorActive,
+      'loan' => me.loanDebtRounds == 0,
+      'last_word' => !me.lastWordActive,
+      _ => false,
+    };
+  }
 
-    final payload = {'id': playerId, 'type': 'revolution'};
+  bool onlineSkillActive(String skillId) {
+    final me = myIndex >= 0 ? room!.players[myIndex] : null;
+    if (me == null) return false;
+    return switch (skillId) {
+      'revolution' => room!.revolutionRound,
+      'double' => me.doubleActive,
+      'mirror' => me.mirrorActive,
+      'tax' => me.taxActive,
+      'insurance' => me.insuranceActive,
+      'anchor' => me.anchorActive,
+      'last_word' => me.lastWordActive,
+      'ambush' => me.ambushNumber != null,
+      'snipe' => me.snipeNumber != null,
+      'chaos' => room!.chaosDelta != 0,
+      'lock' => room!.lockedCards.isNotEmpty,
+      'silence' => room!.silencedPlayers.isNotEmpty,
+      _ => false,
+    };
+  }
+
+  Future<void> sendSkill(Map<String, dynamic> payload) async {
     if (isHost) {
       handleSkill(payload);
     } else {
-      send('skill', payload);
+      await send('skill', payload);
     }
   }
 
-  void activateOnlineDouble() {
-    final me = myIndex >= 0 ? room!.players[myIndex] : null;
-    if (!isMyTurn || me == null || me.doubleUsed) return;
+  Future<void> useOnlineSkill(String skillId) async {
+    if (!onlineSkillEnabled(skillId)) return;
 
-    final payload = {'id': playerId, 'type': 'double'};
-    if (isHost) {
-      handleSkill(payload);
-    } else {
-      send('skill', payload);
+    switch (skillId) {
+      case 'revolution':
+      case 'double':
+      case 'mirror':
+      case 'tax':
+      case 'insurance':
+      case 'anchor':
+      case 'last_word':
+        await sendSkill({'id': playerId, 'type': skillId});
+        break;
+      case 'chaos':
+        await sendSkill({
+          'id': playerId,
+          'type': skillId,
+          'delta': Random().nextBool() ? 3 : -3,
+        });
+        break;
+      case 'loan':
+        await sendSkill({'id': playerId, 'type': skillId});
+        break;
+      case 'lock':
+        await activateOnlineLock();
+        break;
+      case 'peek':
+        await activateOnlinePeek();
+        break;
+      case 'ambush':
+        final number = await chooseOnlineNumberDialog('ambush', '猜一个会出现的数字');
+        if (number == null) return;
+        await sendSkill({'id': playerId, 'type': skillId, 'number': number});
+        break;
+      case 'snipe':
+        await activateOnlineSnipe();
+        break;
+      case 'silence':
+        await activateOnlineSilence();
+        break;
     }
+  }
+
+  Future<int?> chooseOnlineNumberDialog(String title, String label) async {
+    var number = 5;
+    return showDialog<int>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(title),
+          content: DropdownButtonFormField<int>(
+            initialValue: number,
+            decoration: InputDecoration(labelText: label),
+            items: [
+              for (int i = 1; i <= 9; i++)
+                DropdownMenuItem(value: i, child: Text('$i')),
+            ],
+            onChanged: (value) {
+              if (value != null) setDialogState(() => number = value);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(number),
+              child: const Text('确认'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> activateOnlineLock() async {
     final me = myIndex >= 0 ? room!.players[myIndex] : null;
-    if (!isMyTurn || me == null || me.lockUsed) return;
+    if (!isMyTurn || me == null) return;
 
     final targets = [
       for (final player in room!.players)
-        if (player.id != playerId && !room!.currentPlays.containsKey(player.id)) player,
+        if (player.id != playerId &&
+            !room!.currentPlays.containsKey(player.id) &&
+            !player.anchorActive)
+          player,
     ];
     if (targets.isEmpty) {
       showOnlineMessage('没有可以锁定的玩家');
@@ -1551,16 +2246,12 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       'targetId': result.$1,
       'card': result.$2,
     };
-    if (isHost) {
-      handleSkill(payload);
-    } else {
-      send('skill', payload);
-    }
+    await sendSkill(payload);
   }
 
   Future<void> activateOnlinePeek() async {
     final me = myIndex >= 0 ? room!.players[myIndex] : null;
-    if (!isMyTurn || me == null || me.peekUsed) return;
+    if (!isMyTurn || me == null) return;
 
     final targets = [
       for (final player in room!.players)
@@ -1625,11 +2316,120 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     );
 
     final payload = {'id': playerId, 'type': 'peek', 'targetId': result};
-    if (isHost) {
-      handleSkill(payload);
-    } else {
-      send('skill', payload);
+    await sendSkill(payload);
+  }
+
+  Future<void> activateOnlineSnipe() async {
+    final targets = [
+      for (final player in room!.players)
+        if (player.id != playerId) player,
+    ];
+    if (targets.isEmpty) return;
+
+    var targetId = targets.first.id;
+    var number = 5;
+    final result = await showDialog<(String, int)>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('snipe'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: targetId,
+                decoration: const InputDecoration(labelText: '猜谁'),
+                items: [
+                  for (final player in targets)
+                    DropdownMenuItem(value: player.id, child: Text(player.name)),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => targetId = value);
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                initialValue: number,
+                decoration: const InputDecoration(labelText: '猜数字'),
+                items: [
+                  for (int i = 1; i <= 9; i++)
+                    DropdownMenuItem(value: i, child: Text('$i')),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => number = value);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop((targetId, number)),
+              child: const Text('确认'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    await sendSkill({
+      'id': playerId,
+      'type': 'snipe',
+      'targetId': result.$1,
+      'number': result.$2,
+    });
+  }
+
+  Future<void> activateOnlineSilence() async {
+    final targets = [
+      for (final player in room!.players)
+        if (player.id != playerId &&
+            !room!.currentPlays.containsKey(player.id) &&
+            !player.anchorActive)
+          player,
+    ];
+    if (targets.isEmpty) {
+      showOnlineMessage('没有可以禁技的玩家');
+      return;
     }
+
+    var targetId = targets.first.id;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('silence'),
+          content: DropdownButtonFormField<String>(
+            initialValue: targetId,
+            decoration: const InputDecoration(labelText: '禁技玩家'),
+            items: [
+              for (final player in targets)
+                DropdownMenuItem(value: player.id, child: Text(player.name)),
+            ],
+            onChanged: (value) {
+              if (value != null) setDialogState(() => targetId = value);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(targetId),
+              child: const Text('确认'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    await sendSkill({'id': playerId, 'type': 'silence', 'targetId': result});
   }
 
   void showOnlineMessage(String message) {
@@ -1649,9 +2449,26 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
   void finishOnlineRound() {
     final currentRoom = room!;
-    final pool =
-        currentRoom.currentPlays.values.fold<int>(0, (sum, card) => sum + card);
-    final values = currentRoom.currentPlays.values.toList();
+    final notes = <String>[];
+    final effectivePlays = <String, int>{};
+    for (final entry in currentRoom.currentPlays.entries) {
+      final player = currentRoom.players.firstWhere((item) => item.id == entry.key);
+      final value = player.mirrorActive ? 10 - entry.value : entry.value;
+      effectivePlays[entry.key] = value;
+      if (player.mirrorActive) {
+        notes.add('mirror：${player.name} 的 ${entry.value} 变成 $value');
+      }
+    }
+
+    final rawPool = effectivePlays.values.fold<int>(0, (sum, card) => sum + card);
+    final pool = max(0, rawPool + currentRoom.chaosDelta);
+    if (currentRoom.chaosDelta != 0) {
+      notes.add(
+        'chaos：分数池 ${currentRoom.chaosDelta > 0 ? '+' : ''}${currentRoom.chaosDelta}',
+      );
+    }
+
+    final values = effectivePlays.values.toList();
     final hasOne = values.contains(1);
     final hasNine = values.contains(9);
 
@@ -1672,13 +2489,20 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
           : '本轮最大数字是 $targetNumber';
     }
 
-    final candidates = currentRoom.currentPlays.entries
+    final candidates = effectivePlays.entries
         .where((entry) => entry.value == targetNumber)
         .map((entry) => entry.key)
         .toList();
 
     List<String> winnerIds;
-    if (candidates.length == 1) {
+    final lastWordCandidates = candidates
+        .where((id) =>
+            currentRoom.players.firstWhere((player) => player.id == id).lastWordActive)
+        .toList();
+    if (lastWordCandidates.isNotEmpty) {
+      winnerIds = [lastWordCandidates.first];
+      reason = '$reason；last word：${playerNameById(winnerIds.first)} 并列优先';
+    } else if (candidates.length == 1) {
       winnerIds = candidates;
     } else if (currentRoom.lastSingleWinnerId != null &&
         candidates.contains(currentRoom.lastSingleWinnerId)) {
@@ -1690,13 +2514,43 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     }
 
     final gain = pool / winnerIds.length;
-    final notes = <String>[];
     for (final winnerId in winnerIds) {
       final winner = currentRoom.players.firstWhere((player) => player.id == winnerId);
       final multiplier = winner.doubleActive ? 2 : 1;
       winner.score += gain * multiplier;
       if (multiplier == 2) {
         notes.add('double：${winner.name} 得分翻倍');
+      }
+    }
+
+    for (final player in currentRoom.players) {
+      if (player.ambushNumber != null &&
+          currentRoom.currentPlays.values.contains(player.ambushNumber)) {
+        player.score += 3;
+        notes.add('ambush：${player.name} +3');
+      }
+
+      if (player.snipeTargetId != null &&
+          player.snipeNumber != null &&
+          currentRoom.currentPlays[player.snipeTargetId] == player.snipeNumber) {
+        player.score += 5;
+        notes.add('snipe：${player.name} +5');
+      }
+
+      if (player.insuranceActive && !winnerIds.contains(player.id)) {
+        player.score += 3;
+        notes.add('insurance：${player.name} +3');
+      }
+    }
+
+    for (final player in currentRoom.players) {
+      if (!player.taxActive) continue;
+      for (final winnerId in winnerIds) {
+        if (winnerId == player.id) continue;
+        final winner = currentRoom.players.firstWhere((item) => item.id == winnerId);
+        winner.score -= 2;
+        player.score += 2;
+        notes.add('tax：${player.name} 从 ${winner.name} 拿 2 分');
       }
     }
 
@@ -1712,6 +2566,12 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         }
       }
       player.doubleActive = false;
+      if (player.loanDebtRounds > 0 && player.loanStartRound < currentRoom.round) {
+        player.score -= 2;
+        player.loanDebtRounds--;
+        notes.add('loan：${player.name} -2');
+      }
+      clearOnlineRoundSkills(player);
     }
     if (compensation.isNotEmpty) {
       notes.add('连输补偿：${compensation.join('、')}');
@@ -1728,8 +2588,22 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     );
     currentRoom.currentPlays.clear();
     currentRoom.lockedCards.clear();
+    currentRoom.silencedPlayers.clear();
+    currentRoom.chaosDelta = 0;
     currentRoom.phase =
         currentRoom.round == 9 ? OnlinePhase.finished : OnlinePhase.reveal;
+  }
+
+  void clearOnlineRoundSkills(OnlinePlayer player) {
+    player.doubleActive = false;
+    player.mirrorActive = false;
+    player.taxActive = false;
+    player.insuranceActive = false;
+    player.anchorActive = false;
+    player.lastWordActive = false;
+    player.ambushNumber = null;
+    player.snipeTargetId = null;
+    player.snipeNumber = null;
   }
 
   void startNextOnlineRound() {
@@ -1739,6 +2613,8 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
       room!.phase = OnlinePhase.choosing;
       room!.revolutionRound = false;
       room!.lockedCards.clear();
+      room!.silencedPlayers.clear();
+      room!.chaosDelta = 0;
       selectedCard = null;
     });
     broadcastState();
@@ -1818,28 +2694,19 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
           style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 10),
-        buildSkillPanel(
-          revolutionActive: room!.revolutionRound,
-          revolutionUsed: me?.revolutionUsed ?? true,
-          revolutionEnabled: isMyTurn &&
-              me != null &&
-              !me.revolutionUsed &&
-              !room!.revolutionRound,
-          onRevolution: activateOnlineRevolution,
-          doubleActive: me?.doubleActive ?? false,
-          doubleUsed: me?.doubleUsed ?? true,
-          doubleEnabled: isMyTurn && me != null && !me.doubleUsed,
-          onDouble: activateOnlineDouble,
-          lockUsed: me?.lockUsed ?? true,
-          lockEnabled: isMyTurn && me != null && !me.lockUsed,
-          onLock: activateOnlineLock,
-          peekUsed: me?.peekUsed ?? true,
-          peekEnabled: isMyTurn &&
-              me != null &&
-              !me.peekUsed &&
-              room!.currentPlays.isNotEmpty,
-          onPeek: activateOnlinePeek,
-          lockText: onlineLockText(),
+        buildSkillHandPanel(
+          cards: [
+            if (me != null)
+              for (final skillId in me.skillHand)
+                SkillButtonData(
+                  definition: skillDefinitions[skillId]!,
+                  active: onlineSkillActive(skillId),
+                  used: me.usedSkills.contains(skillId),
+                  enabled: onlineSkillEnabled(skillId),
+                  onPressed: () => useOnlineSkill(skillId),
+                ),
+          ],
+          statusText: me == null ? '' : onlineSkillStatusText(me),
         ),
         const SizedBox(height: 18),
         if (me != null)
@@ -1989,6 +2856,26 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     return room!.lockedCards.entries
         .map((entry) => '${playerNameById(entry.key)} 不能出 ${entry.value}')
         .join('；');
+  }
+
+  String onlineSkillStatusText(OnlinePlayer player) {
+    final items = [
+      if (room!.silencedPlayers.contains(player.id)) '你本轮被 silence，不能用技能',
+      if (room!.revolutionRound) 'revolution：本轮比小',
+      if (player.doubleActive) 'double：赢了得分翻倍',
+      if (player.mirrorActive) 'mirror：点数变成 10-x',
+      if (player.taxActive) 'tax：从赢家拿 2 分',
+      if (player.insuranceActive) 'insurance：没赢 +3',
+      if (player.anchorActive) 'anchor：本轮免疫干扰',
+      if (player.lastWordActive) 'last word：并列优先',
+      if (player.ambushNumber != null) 'ambush：猜 ${player.ambushNumber}',
+      if (player.snipeTargetId != null && player.snipeNumber != null)
+        'snipe：猜 ${playerNameById(player.snipeTargetId!)} 出 ${player.snipeNumber}',
+      if (room!.chaosDelta != 0)
+        'chaos：分数池 ${room!.chaosDelta > 0 ? '+' : ''}${room!.chaosDelta}',
+      if (onlineLockText().isNotEmpty) onlineLockText(),
+    ];
+    return items.join('；');
   }
 }
 
