@@ -115,6 +115,7 @@ class Player {
   final String name;
   double score = 0;
   final Set<int> usedCards = {};
+  bool revolutionUsed = false;
 }
 
 class RoundResult {
@@ -290,10 +291,12 @@ class _GamePageState extends State<GamePage> {
   }
 
   void activateRevolution() {
-    if (currentPlays.isNotEmpty || revolutionRound) return;
+    final player = players[currentPlayer];
+    if (player.revolutionUsed || revolutionRound) return;
 
     setState(() {
       revolutionRound = true;
+      player.revolutionUsed = true;
     });
   }
 
@@ -374,7 +377,8 @@ class _GamePageState extends State<GamePage> {
         const SizedBox(height: 10),
         buildRevolutionButton(
           active: revolutionRound,
-          enabled: currentPlays.isEmpty && !revolutionRound,
+          used: player.revolutionUsed,
+          enabled: !player.revolutionUsed && !revolutionRound,
           onPressed: activateRevolution,
         ),
         const SizedBox(height: 18),
@@ -521,13 +525,18 @@ class CardMemoryLine {
 
 Widget buildRevolutionButton({
   required bool active,
+  required bool used,
   required bool enabled,
   required VoidCallback onPressed,
 }) {
   return OutlinedButton.icon(
     onPressed: enabled ? onPressed : null,
     icon: const Icon(Icons.swap_vert),
-    label: Text(active ? 'revolution 已启动：本轮比小' : 'revolution：本轮改成比小'),
+    label: Text(switch ((active, used)) {
+      (true, _) => 'revolution 已启动：本轮比小',
+      (false, true) => 'revolution 已用完',
+      _ => 'revolution：本局一次，本轮改成比小',
+    }),
     style: OutlinedButton.styleFrom(
       foregroundColor: active ? const Color(0xFFE09F3E) : const Color(0xFF2E7D6F),
       side: BorderSide(
@@ -634,18 +643,21 @@ class OnlinePlayer {
     required this.id,
     required this.name,
     this.score = 0,
+    this.revolutionUsed = false,
     Set<int>? usedCards,
   }) : usedCards = usedCards ?? {};
 
   final String id;
   final String name;
   double score;
+  bool revolutionUsed;
   final Set<int> usedCards;
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
         'score': score,
+        'revolutionUsed': revolutionUsed,
         'usedCards': usedCards.toList(),
       };
 
@@ -654,6 +666,7 @@ class OnlinePlayer {
       id: json['id'] as String,
       name: json['name'] as String,
       score: (json['score'] as num).toDouble(),
+      revolutionUsed: (json['revolutionUsed'] as bool?) ?? false,
       usedCards:
           ((json['usedCards'] as List<dynamic>?) ?? []).map((item) => item as int).toSet(),
     );
@@ -931,6 +944,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         .onBroadcast(event: 'join', callback: handleJoin)
         .onBroadcast(event: 'state', callback: handleState)
         .onBroadcast(event: 'submit_card', callback: handleSubmitCard)
+        .onBroadcast(event: 'revolution', callback: handleRevolution)
         .onBroadcast(event: 'next_round', callback: handleNextRound)
         .onBroadcast(event: 'state_request', callback: handleStateRequest)
         .subscribe((status, error) {
@@ -1013,6 +1027,25 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     broadcastState();
   }
 
+  void handleRevolution(Map<String, dynamic> payload) {
+    if (!isHost || room == null || room!.phase != OnlinePhase.choosing) return;
+
+    final id = payload['id'] as String?;
+    if (id == null || room!.revolutionRound) return;
+
+    final playerIndex = room!.players.indexWhere((player) => player.id == id);
+    if (playerIndex != room!.currentPlayerIndex) return;
+
+    final player = room!.players[playerIndex];
+    if (player.revolutionUsed) return;
+
+    setState(() {
+      player.revolutionUsed = true;
+      room!.revolutionRound = true;
+    });
+    broadcastState();
+  }
+
   void handleNextRound(Map<String, dynamic> payload) {
     if (!isHost || room == null || room!.phase != OnlinePhase.reveal) return;
     startNextOnlineRound();
@@ -1050,13 +1083,16 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
   }
 
   void activateOnlineRevolution() {
-    if (!isHost || room == null) return;
-    if (room!.currentPlays.isNotEmpty || room!.revolutionRound) return;
+    final me = myIndex >= 0 ? room!.players[myIndex] : null;
+    if (!isMyTurn || me == null) return;
+    if (me.revolutionUsed || room!.revolutionRound) return;
 
-    setState(() {
-      room!.revolutionRound = true;
-    });
-    broadcastState();
+    final payload = {'id': playerId};
+    if (isHost) {
+      handleRevolution(payload);
+    } else {
+      send('revolution', payload);
+    }
   }
 
   void submitSelectedCard() {
@@ -1219,7 +1255,11 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         const SizedBox(height: 10),
         buildRevolutionButton(
           active: room!.revolutionRound,
-          enabled: isHost && room!.currentPlays.isEmpty && !room!.revolutionRound,
+          used: me?.revolutionUsed ?? true,
+          enabled: isMyTurn &&
+              me != null &&
+              !me.revolutionUsed &&
+              !room!.revolutionRound,
           onPressed: activateOnlineRevolution,
         ),
         const SizedBox(height: 18),
