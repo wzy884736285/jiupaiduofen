@@ -736,6 +736,7 @@ Widget buildSkillPanel({
                   (false, true) => 'revolution 已用',
                   _ => 'revolution',
                 },
+                description: '本轮改成比小',
                 active: revolutionActive,
                 used: revolutionUsed,
                 enabled: revolutionEnabled,
@@ -748,6 +749,7 @@ Widget buildSkillPanel({
                   (false, true) => 'double 已用',
                   _ => 'double',
                 },
+                description: '赢了得分翻倍',
                 active: doubleActive,
                 used: doubleUsed,
                 enabled: doubleEnabled,
@@ -756,6 +758,7 @@ Widget buildSkillPanel({
               buildSkillButton(
                 icon: Icons.block,
                 label: lockUsed ? 'lock 已用' : 'lock',
+                description: '禁别人一个数字',
                 active: lockText.isNotEmpty,
                 used: lockUsed,
                 enabled: lockEnabled,
@@ -764,6 +767,7 @@ Widget buildSkillPanel({
               buildSkillButton(
                 icon: Icons.visibility,
                 label: peekUsed ? 'peek 已用' : 'peek',
+                description: '偷看已出的牌',
                 active: false,
                 used: peekUsed,
                 enabled: peekEnabled,
@@ -791,20 +795,51 @@ Widget buildSkillPanel({
 Widget buildSkillButton({
   required IconData icon,
   required String label,
+  required String description,
   required bool active,
   required bool used,
   required bool enabled,
   required VoidCallback onPressed,
 }) {
   final color = active ? const Color(0xFFE09F3E) : const Color(0xFF2E7D6F);
-  return OutlinedButton.icon(
-    onPressed: enabled ? onPressed : null,
-    icon: Icon(icon, size: 18),
-    label: Text(label),
-    style: OutlinedButton.styleFrom(
-      foregroundColor: used && !active ? Colors.black54 : color,
-      side: BorderSide(color: used && !active ? Colors.black26 : color),
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+  final textColor = used && !active ? Colors.black54 : color;
+
+  return SizedBox(
+    width: 156,
+    child: OutlinedButton(
+      onPressed: enabled ? onPressed : null,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: textColor,
+        side: BorderSide(color: used && !active ? Colors.black26 : color),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
+        alignment: Alignment.centerLeft,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          Text(
+            description,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 12, color: textColor.withValues(alpha: 0.75)),
+          ),
+        ],
+      ),
     ),
   );
 }
