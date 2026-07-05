@@ -320,8 +320,11 @@ class Player {
   int lossStreak = 0;
   int skillRefreshTokens = 0;
 
-  bool get shouldAvoidFirst =>
-      hasAnySkill(skillHand, skillsThatNeedEarlierPlayers);
+  bool get shouldAvoidFirst => skillHand.any(
+    (skillId) =>
+        skillsThatNeedEarlierPlayers.contains(skillId) &&
+        !usedSkills.contains(skillId),
+  );
 
   bool get shouldAvoidLast =>
       hasAnySkill(skillHand, skillsThatNeedLaterPlayers);
@@ -425,6 +428,15 @@ class _GamePageState extends State<GamePage> {
   String localTurnOrderText() {
     if (turnOrder.isEmpty) return '';
     return turnOrder.map((index) => players[index].name).join(' → ');
+  }
+
+  String localRoundEffectsText() {
+    final items = [
+      if (defenseRound) 'silence：本轮全部技能失效',
+      if (currentChaosDeltas.isNotEmpty) 'chaos：每张牌随机 -1/0/+1',
+      if (localLockText().isNotEmpty) localLockText(),
+    ];
+    return items.join('；');
   }
 
   void startGame() {
@@ -1356,6 +1368,13 @@ class _GamePageState extends State<GamePage> {
           '本轮顺序：${localTurnOrderText()}',
           style: const TextStyle(fontSize: 15, color: Color(0xFF55524A)),
         ),
+        if (localRoundEffectsText().isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            '本轮效果：${localRoundEffectsText()}',
+            style: const TextStyle(fontSize: 15, color: Color(0xFF8A4F00)),
+          ),
+        ],
         const SizedBox(height: 8),
         Text(
           '请 ${player.name} 出牌',
@@ -1548,7 +1567,8 @@ class _GamePageState extends State<GamePage> {
 
   String localSkillStatusText(Player player) {
     final items = [
-      if (revolutionRound) 'revolution：本轮比小',
+      if (revolutionRound && currentPlayer == revolutionOwner)
+        'revolution：本轮比小',
       if (player.doubleActive) 'double：赢了得分翻倍',
       if (player.mirrorActive) 'mirror：点数变成 10-x',
       if (player.taxActive)
@@ -1943,8 +1963,11 @@ class OnlinePlayer {
   int skillRefreshTokens;
   final Set<int> usedCards;
 
-  bool get shouldAvoidFirst =>
-      hasAnySkill(skillHand, skillsThatNeedEarlierPlayers);
+  bool get shouldAvoidFirst => skillHand.any(
+    (skillId) =>
+        skillsThatNeedEarlierPlayers.contains(skillId) &&
+        !usedSkills.contains(skillId),
+  );
 
   bool get shouldAvoidLast =>
       hasAnySkill(skillHand, skillsThatNeedLaterPlayers);
@@ -2403,6 +2426,16 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
   String onlineTurnOrderText() {
     if (room == null || room!.turnOrder.isEmpty) return '';
     return room!.turnOrder.map(playerNameById).join(' → ');
+  }
+
+  String onlineRoundEffectsText() {
+    if (room == null) return '';
+    final items = [
+      if (room!.defenseRound) 'silence：本轮全部技能失效',
+      if (room!.chaosDeltas.isNotEmpty) 'chaos：每张牌随机 -1/0/+1',
+      if (onlineLockText().isNotEmpty) onlineLockText(),
+    ];
+    return items.join('；');
   }
 
   @override
@@ -3070,7 +3103,14 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     );
 
     final payload = {'id': playerId, 'type': 'peek', 'targetId': result};
-    await sendSkill(payload);
+    if (isHost) {
+      await sendSkill(payload);
+    } else {
+      setState(() {
+        me.usedSkills.add('peek');
+      });
+      await sendSkill(payload);
+    }
   }
 
   Future<void> activateOnlineAmbush() async {
@@ -3588,6 +3628,13 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
           '本轮顺序：${onlineTurnOrderText()}',
           style: const TextStyle(fontSize: 15, color: Color(0xFF55524A)),
         ),
+        if (onlineRoundEffectsText().isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            '本轮效果：${onlineRoundEffectsText()}',
+            style: const TextStyle(fontSize: 15, color: Color(0xFF8A4F00)),
+          ),
+        ],
         const SizedBox(height: 8),
         Text(
           isMyTurn ? '轮到你出牌' : '等待 ${activePlayer?.name ?? '下一位玩家'} 出牌',
@@ -3801,7 +3848,8 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
   String onlineSkillStatusText(OnlinePlayer player) {
     final items = [
-      if (room!.revolutionRound) 'revolution：本轮比小',
+      if (room!.revolutionRound && player.id == room!.revolutionOwnerId)
+        'revolution：本轮比小',
       if (player.doubleActive) 'double：赢了得分翻倍',
       if (player.mirrorActive) 'mirror：点数变成 10-x',
       if (player.taxActive)
