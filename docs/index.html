@@ -31,20 +31,7 @@
 
   <title>mini_game</title>
   <link rel="manifest" href="manifest.json">
-  <script>
-    const appVersion = 'peek-revolution-visibility-v1';
-    if (localStorage.getItem('jiupaiduofen-version') !== appVersion) {
-      localStorage.setItem('jiupaiduofen-version', appVersion);
-      if ('caches' in window) {
-        caches.keys().then((keys) => keys.forEach((key) => caches.delete(key)));
-      }
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then((registrations) => {
-          registrations.forEach((registration) => registration.unregister());
-        });
-      }
-    }
-  </script>
+<script>window.__JIUPAIDUOFEN_CACHE_BUST__="version-badge-v1";</script>
 </head>
 <body>
   <!--

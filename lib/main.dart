@@ -14,6 +14,7 @@ const supabaseKey = String.fromEnvironment(
   defaultValue: defaultSupabaseKey,
 );
 const hasSupabaseConfig = supabaseUrl != '' && supabaseKey != '';
+const currentAppVersion = 'v2026.07.05.1';
 
 const skillDeck = [
   'revolution',
@@ -79,7 +80,7 @@ const skillDefinitions = {
   'tax': SkillDefinition(
     id: 'tax',
     name: 'tax',
-    description: '从赢家拿 2 分',
+    description: '从赢家拿分',
     detail:
         '本轮结算后，如果别人赢了，你从每个赢家那里拿分；2人局每个赢家拿5分，3人局拿2分，4-5人局拿1分。如果你自己就是赢家，不会从自己身上拿分。',
     icon: Icons.account_balance,
@@ -225,7 +226,50 @@ class NumberBattleApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2E7D6F)),
         useMaterial3: true,
       ),
+      builder: (context, child) =>
+          VersionBadgeOverlay(child: child ?? const SizedBox.shrink()),
       home: HomePage(onlineEnabled: onlineEnabled),
+    );
+  }
+}
+
+class VersionBadgeOverlay extends StatelessWidget {
+  const VersionBadgeOverlay({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        child,
+        Positioned(
+          right: 8,
+          bottom: 8,
+          child: SafeArea(
+            minimum: const EdgeInsets.all(6),
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.52),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Text(
+                    '版本 $currentAppVersion',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1912,6 +1956,7 @@ class OnlinePlayer {
   OnlinePlayer({
     required this.id,
     required this.name,
+    this.appVersion = currentAppVersion,
     this.score = 0,
     List<String>? skillHand,
     Set<String>? usedSkills,
@@ -1940,6 +1985,7 @@ class OnlinePlayer {
 
   final String id;
   final String name;
+  String appVersion;
   double score;
   List<String> skillHand;
   Set<String> usedSkills;
@@ -2000,6 +2046,7 @@ class OnlinePlayer {
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
+    'appVersion': appVersion,
     'score': score,
     'skillHand': skillHand,
     'usedSkills': usedSkills.toList(),
@@ -2028,6 +2075,7 @@ class OnlinePlayer {
     return OnlinePlayer(
       id: json['id'] as String,
       name: json['name'] as String,
+      appVersion: (json['appVersion'] as String?) ?? '旧版本',
       score: (json['score'] as num).toDouble(),
       skillHand: List<String>.from((json['skillHand'] as List?) ?? const []),
       usedSkills: List<String>.from(
@@ -2476,7 +2524,11 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
               );
               broadcastState();
             } else {
-              send('join', {'id': playerId, 'name': widget.playerName});
+              send('join', {
+                'id': playerId,
+                'name': widget.playerName,
+                'appVersion': currentAppVersion,
+              });
               send('state_request', {'id': playerId});
             }
           }
@@ -2494,13 +2546,19 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
     final id = payload['id'] as String?;
     final name = payload['name'] as String?;
+    final appVersion = payload['appVersion'] as String? ?? '旧版本';
     if (id == null || name == null) return;
     if (room!.players.any((player) => player.id == id)) return;
     if (room!.players.length >= room!.playerCount) return;
 
     setState(() {
       room!.players.add(
-        OnlinePlayer(id: id, name: name, skillHand: drawSkillHand(Random())),
+        OnlinePlayer(
+          id: id,
+          name: name,
+          appVersion: appVersion,
+          skillHand: drawSkillHand(Random()),
+        ),
       );
     });
     broadcastState();
@@ -3571,6 +3629,17 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     );
   }
 
+  bool get hasVersionMismatch =>
+      room?.players.any((player) => player.appVersion != currentAppVersion) ??
+      false;
+
+  String onlinePlayerVersionText(OnlinePlayer player) {
+    if (player.appVersion == currentAppVersion) {
+      return '版本 ${player.appVersion}';
+    }
+    return '版本 ${player.appVersion}，和你当前版本不同';
+  }
+
   Widget buildOnlineLobby() {
     return ListView(
       children: [
@@ -3580,6 +3649,21 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         ),
         const SizedBox(height: 8),
         Text('连接状态：$connectionStatus'),
+        if (hasVersionMismatch) ...[
+          const SizedBox(height: 8),
+          const ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.warning_amber, color: Color(0xFFC26400)),
+            title: Text(
+              '有人版本不同',
+              style: TextStyle(
+                color: Color(0xFFC26400),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            subtitle: Text('建议所有人刷新网页后重新进入房间，再开始游戏。'),
+          ),
+        ],
         const SizedBox(height: 18),
         Text(
           '玩家 ${room!.players.length} / ${room!.playerCount}',
@@ -3592,6 +3676,17 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
               player.id == playerId ? Icons.person_pin : Icons.person,
             ),
             title: Text(player.name),
+            subtitle: Text(
+              onlinePlayerVersionText(player),
+              style: TextStyle(
+                color: player.appVersion == currentAppVersion
+                    ? const Color(0xFF5E5A52)
+                    : const Color(0xFFC26400),
+                fontWeight: player.appVersion == currentAppVersion
+                    ? FontWeight.normal
+                    : FontWeight.w700,
+              ),
+            ),
           ),
         const SizedBox(height: 18),
         if (isHost)
