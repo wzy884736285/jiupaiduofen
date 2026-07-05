@@ -14,7 +14,7 @@ const supabaseKey = String.fromEnvironment(
   defaultValue: defaultSupabaseKey,
 );
 const hasSupabaseConfig = supabaseUrl != '' && supabaseKey != '';
-const currentAppVersion = 'v2026.07.05.3';
+const currentAppVersion = 'v2026.07.05.4';
 const maxOnlinePlayers = 5;
 const minOnlinePlayersToStart = 2;
 
@@ -301,6 +301,15 @@ class HomePage extends StatelessWidget {
                 style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 18),
+              OutlinedButton.icon(
+                onPressed: () => showRulesDialog(context),
+                icon: const Icon(Icons.menu_book),
+                label: const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Text('完整规则说明书', style: TextStyle(fontSize: 17)),
+                ),
+              ),
+              const SizedBox(height: 12),
               FilledButton.icon(
                 onPressed: () => Navigator.of(
                   context,
@@ -375,10 +384,10 @@ class Player {
   bool get shouldAvoidLast =>
       hasAnySkill(skillHand, skillsThatNeedLaterPlayers);
 
-  void resetForNewGame(Random random) {
+  void resetForNewGame(Random random, {bool skillModeEnabled = true}) {
     score = 0;
     usedCards.clear();
-    skillHand = drawSkillHand(random);
+    skillHand = skillModeEnabled ? drawSkillHand(random) : [];
     usedSkills.clear();
     doubleActive = false;
     mirrorActive = false;
@@ -432,6 +441,7 @@ class _GamePageState extends State<GamePage> {
   Phase phase = Phase.setup;
   int playerCount = 3;
   int round = 1;
+  bool skillModeEnabled = true;
   List<int> turnOrder = [];
   int turnPosition = 0;
   int? selectedCard;
@@ -493,7 +503,7 @@ class _GamePageState extends State<GamePage> {
             ? '玩家${index + 1}'
             : nameControllers[index].text.trim(),
       );
-      player.skillHand = drawSkillHand(random);
+      player.skillHand = skillModeEnabled ? drawSkillHand(random) : [];
       return player;
     });
 
@@ -818,7 +828,7 @@ class _GamePageState extends State<GamePage> {
     final random = Random();
     setState(() {
       for (final player in players) {
-        player.resetForNewGame(random);
+        player.resetForNewGame(random, skillModeEnabled: skillModeEnabled);
       }
       phase = Phase.choosing;
       round = 1;
@@ -841,6 +851,7 @@ class _GamePageState extends State<GamePage> {
   }
 
   bool localSkillEnabled(String skillId) {
+    if (!skillModeEnabled) return false;
     final player = players[currentPlayer];
     if (!player.skillHand.contains(skillId) ||
         player.usedSkills.contains(skillId)) {
@@ -1373,6 +1384,19 @@ class _GamePageState extends State<GamePage> {
           onSelectionChanged: (value) =>
               setState(() => playerCount = value.first),
         ),
+        const SizedBox(height: 16),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: skillModeEnabled,
+          onChanged: (value) => setState(() => skillModeEnabled = value),
+          title: const Text('开启技能对局'),
+          subtitle: const Text('开启后每人随机抽 3 张技能牌；关闭后只进行基础九牌对局。'),
+        ),
+        OutlinedButton.icon(
+          onPressed: () => showRulesDialog(context),
+          icon: const Icon(Icons.menu_book),
+          label: const Text('完整规则说明书'),
+        ),
         const SizedBox(height: 24),
         for (int i = 0; i < playerCount; i++)
           Padding(
@@ -1428,21 +1452,24 @@ class _GamePageState extends State<GamePage> {
           style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 10),
-        buildSkillHandPanel(
-          cards: [
-            for (final skillId in player.skillHand)
-              if (skillDefinitions[skillId] != null)
-                SkillButtonData(
-                  definition: skillDefinitions[skillId]!,
-                  active: localSkillActive(skillId),
-                  used: player.usedSkills.contains(skillId),
-                  enabled: localSkillEnabled(skillId),
-                  onPressed: () => useLocalSkill(skillId),
-                ),
-          ],
-          statusText: localSkillStatusText(player),
-        ),
-        if (canRefreshLocalSkill(player)) ...[
+        if (skillModeEnabled)
+          buildSkillHandPanel(
+            cards: [
+              for (final skillId in player.skillHand)
+                if (skillDefinitions[skillId] != null)
+                  SkillButtonData(
+                    definition: skillDefinitions[skillId]!,
+                    active: localSkillActive(skillId),
+                    used: player.usedSkills.contains(skillId),
+                    enabled: localSkillEnabled(skillId),
+                    onPressed: () => useLocalSkill(skillId),
+                  ),
+            ],
+            statusText: localSkillStatusText(player),
+          )
+        else
+          const Text('本局未开启技能对局。'),
+        if (skillModeEnabled && canRefreshLocalSkill(player)) ...[
           const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: () => refreshLocalSkill(player),
@@ -1790,6 +1817,87 @@ Future<void> showSkillCatalogDialog(BuildContext context) {
   );
 }
 
+Future<void> showRulesDialog(BuildContext context) {
+  return showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('完整规则说明书'),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ruleSection(
+                '游戏目标',
+                '一局共 9 轮。每轮所有玩家各出 1 张数字牌，数字牌为 1 到 9，每个数字整局只能用一次。每轮会产生分数池，赢家拿走本轮分数池；9 轮后总分最高者获胜。',
+              ),
+              ruleSection(
+                '每轮流程',
+                '每轮出牌顺序随机。轮到你时，可以先发动可用技能，再选择一张还没用过的数字牌并提交。所有人都提交后，本轮结算。',
+              ),
+              ruleSection(
+                '分数池',
+                '本轮所有人出的数字相加，就是本轮分数池。例如 3 人分别出 2、5、8，本轮分数池就是 15 分。',
+              ),
+              ruleSection(
+                '胜负判定',
+                '默认数字最大者赢得本轮分数池。如果出现并列最大，通常由并列玩家共同获胜。部分技能会改变判定，例如 revolution 会让本轮改成比谁小。',
+              ),
+              ruleSection(
+                '特殊 1 / 9 规则',
+                '普通规则下如果本轮同时出现 1 和 9，则 1 压过 9，目标数字变成 1。revolution 状态下规则反过来，如果同时出现 1 和 9，则 9 获胜。',
+              ),
+              ruleSection(
+                '技能对局',
+                '开局前可以选择是否开启技能对局。开启后，每位玩家随机抽 3 张技能牌进行本局游戏；关闭后不发技能牌，只进行基础九牌对局。',
+              ),
+              ruleSection(
+                '技能使用',
+                '除特别说明外，每张技能牌一局只能使用一次。技能通常只能在自己出牌前发动。连输 4 轮后，可以选择恢复一张已经用过的技能牌。',
+              ),
+              ruleSection(
+                '线上房间',
+                '线上房间最多 5 人。房主不需要等满员，至少 2 人就可以开始。大厅会显示每位玩家的版本号，如果有人版本不同，建议全部刷新网页后重新进入房间。',
+              ),
+              ruleSection(
+                '当前技能',
+                skillDefinitions.values
+                    .where((skill) => skillDeck.contains(skill.id))
+                    .map((skill) => '${skill.name}：${skill.detail}')
+                    .join('\n\n'),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('知道了'),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget ruleSection(String title, String body) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 6),
+        Text(body, style: const TextStyle(height: 1.35)),
+      ],
+    ),
+  );
+}
+
 Widget buildSkillCatalogPanel() {
   return Card(
     child: ExpansionTile(
@@ -2015,9 +2123,9 @@ class OnlinePlayer {
   bool get shouldAvoidLast =>
       hasAnySkill(skillHand, skillsThatNeedLaterPlayers);
 
-  void resetForNewGame(Random random) {
+  void resetForNewGame(Random random, {bool skillModeEnabled = true}) {
     score = 0;
-    skillHand = drawSkillHand(random);
+    skillHand = skillModeEnabled ? drawSkillHand(random) : [];
     usedSkills.clear();
     doubleActive = false;
     mirrorActive = false;
@@ -2147,6 +2255,7 @@ class OnlineRoomState {
     required this.phase,
     required this.playerCount,
     required this.players,
+    this.skillModeEnabled = true,
     this.round = 1,
     this.currentPlayerIndex = 0,
     List<String>? turnOrder,
@@ -2173,6 +2282,7 @@ class OnlineRoomState {
 
   OnlinePhase phase;
   int playerCount;
+  bool skillModeEnabled;
   int round;
   int currentPlayerIndex;
   List<String> turnOrder;
@@ -2208,6 +2318,7 @@ class OnlineRoomState {
   Map<String, dynamic> toJson() => {
     'phase': phase.name,
     'playerCount': playerCount,
+    'skillModeEnabled': skillModeEnabled,
     'round': round,
     'currentPlayerIndex': currentPlayerIndex,
     'turnOrder': turnOrder,
@@ -2251,6 +2362,7 @@ class OnlineRoomState {
     return OnlineRoomState(
       phase: OnlinePhase.values.byName(json['phase'] as String),
       playerCount: json['playerCount'] as int,
+      skillModeEnabled: (json['skillModeEnabled'] as bool?) ?? true,
       round: json['round'] as int,
       currentPlayerIndex: (json['currentPlayerIndex'] as int?) ?? turnPosition,
       turnOrder: turnOrder,
@@ -2292,6 +2404,7 @@ class OnlineLobbyPage extends StatefulWidget {
 class _OnlineLobbyPageState extends State<OnlineLobbyPage> {
   final nameController = TextEditingController(text: '玩家');
   final roomController = TextEditingController();
+  bool skillModeEnabled = true;
 
   void createRoom() {
     final roomCode = makeRoomCode();
@@ -2301,6 +2414,7 @@ class _OnlineLobbyPageState extends State<OnlineLobbyPage> {
           roomCode: roomCode,
           playerName: cleanName(),
           playerCount: maxOnlinePlayers,
+          skillModeEnabled: skillModeEnabled,
           isHost: true,
         ),
       ),
@@ -2317,6 +2431,7 @@ class _OnlineLobbyPageState extends State<OnlineLobbyPage> {
           roomCode: roomCode,
           playerName: cleanName(),
           playerCount: maxOnlinePlayers,
+          skillModeEnabled: true,
           isHost: false,
         ),
       ),
@@ -2368,6 +2483,18 @@ class _OnlineLobbyPageState extends State<OnlineLobbyPage> {
                 title: Text('房间最多 5 人'),
                 subtitle: Text('不用等满员，2 人以上房主就可以直接开始。'),
               ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: skillModeEnabled,
+                onChanged: (value) => setState(() => skillModeEnabled = value),
+                title: const Text('创建时开启技能对局'),
+                subtitle: const Text('开启后每人随机抽 3 张技能牌；关闭后只进行基础九牌对局。'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => showRulesDialog(context),
+                icon: const Icon(Icons.menu_book),
+                label: const Text('完整规则说明书'),
+              ),
               const SizedBox(height: 18),
               FilledButton.icon(
                 onPressed: widget.onlineEnabled ? createRoom : null,
@@ -2409,12 +2536,14 @@ class OnlineGamePage extends StatefulWidget {
     required this.roomCode,
     required this.playerName,
     required this.playerCount,
+    required this.skillModeEnabled,
     required this.isHost,
   });
 
   final String roomCode;
   final String playerName;
   final int playerCount;
+  final bool skillModeEnabled;
   final bool isHost;
 
   @override
@@ -2500,11 +2629,14 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
               room = OnlineRoomState(
                 phase: OnlinePhase.lobby,
                 playerCount: widget.playerCount,
+                skillModeEnabled: widget.skillModeEnabled,
                 players: [
                   OnlinePlayer(
                     id: playerId,
                     name: widget.playerName,
-                    skillHand: drawSkillHand(Random()),
+                    skillHand: widget.skillModeEnabled
+                        ? drawSkillHand(Random())
+                        : [],
                   ),
                 ],
               );
@@ -2543,7 +2675,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
           id: id,
           name: name,
           appVersion: appVersion,
-          skillHand: drawSkillHand(Random()),
+          skillHand: room!.skillModeEnabled ? drawSkillHand(Random()) : [],
         ),
       );
     });
@@ -2590,6 +2722,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
   void handleSkill(Map<String, dynamic> payload) {
     if (!isHost || room == null || room!.phase != OnlinePhase.choosing) return;
+    if (!room!.skillModeEnabled) return;
 
     final id = payload['id'] as String?;
     final type = payload['type'] as String?;
@@ -2801,7 +2934,10 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     setState(() {
       final random = Random();
       for (final player in room!.players) {
-        player.resetForNewGame(random);
+        player.resetForNewGame(
+          random,
+          skillModeEnabled: room!.skillModeEnabled,
+        );
       }
       room!.phase = OnlinePhase.choosing;
       room!.round = 1;
@@ -2824,6 +2960,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
   bool onlineSkillEnabled(String skillId) {
     final me = myIndex >= 0 ? room!.players[myIndex] : null;
+    if (room == null || !room!.skillModeEnabled) return false;
     if (!isMyTurn || me == null) return false;
     if (!me.skillHand.contains(skillId) || me.usedSkills.contains(skillId)) {
       return false;
@@ -3655,6 +3792,10 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
           '玩家 ${room!.players.length} / 最多 ${room!.playerCount}',
           style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
         ),
+        Text(
+          room!.skillModeEnabled ? '模式：技能对局' : '模式：基础对局（无技能）',
+          style: const TextStyle(fontSize: 15, color: Color(0xFF55524A)),
+        ),
         const SizedBox(height: 8),
         for (final player in room!.players)
           ListTile(
@@ -3723,22 +3864,27 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
           style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 10),
-        buildSkillHandPanel(
-          cards: [
-            if (me != null)
-              for (final skillId in me.skillHand)
-                if (skillDefinitions[skillId] != null)
-                  SkillButtonData(
-                    definition: skillDefinitions[skillId]!,
-                    active: onlineSkillActive(skillId),
-                    used: me.usedSkills.contains(skillId),
-                    enabled: onlineSkillEnabled(skillId),
-                    onPressed: () => useOnlineSkill(skillId),
-                  ),
-          ],
-          statusText: me == null ? '' : onlineSkillStatusText(me),
-        ),
-        if (me != null && canRefreshOnlineSkill(me)) ...[
+        if (room!.skillModeEnabled)
+          buildSkillHandPanel(
+            cards: [
+              if (me != null)
+                for (final skillId in me.skillHand)
+                  if (skillDefinitions[skillId] != null)
+                    SkillButtonData(
+                      definition: skillDefinitions[skillId]!,
+                      active: onlineSkillActive(skillId),
+                      used: me.usedSkills.contains(skillId),
+                      enabled: onlineSkillEnabled(skillId),
+                      onPressed: () => useOnlineSkill(skillId),
+                    ),
+            ],
+            statusText: me == null ? '' : onlineSkillStatusText(me),
+          )
+        else
+          const Text('本局未开启技能对局。'),
+        if (room!.skillModeEnabled &&
+            me != null &&
+            canRefreshOnlineSkill(me)) ...[
           const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: () => refreshOnlineSkill(me),
