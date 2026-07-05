@@ -14,7 +14,7 @@ const supabaseKey = String.fromEnvironment(
   defaultValue: defaultSupabaseKey,
 );
 const hasSupabaseConfig = supabaseUrl != '' && supabaseKey != '';
-const currentAppVersion = 'v2026.07.05.2';
+const currentAppVersion = 'v2026.07.05.3';
 const maxOnlinePlayers = 5;
 const minOnlinePlayersToStart = 2;
 
@@ -869,17 +869,17 @@ class _GamePageState extends State<GamePage> {
   bool localSkillActive(String skillId) {
     final player = players[currentPlayer];
     return switch (skillId) {
-      'revolution' => revolutionRound,
+      'revolution' => revolutionRound && revolutionOwner == currentPlayer,
       'double' => player.doubleActive,
       'mirror' => player.mirrorActive,
       'tax' => player.taxActive,
       'insurance' => player.insuranceActive,
-      'silence' => defenseRound,
+      'silence' => defenseRound && player.usedSkills.contains('silence'),
       'last_word' => player.lastWordActive,
       'ambush' => player.ambushNumber != null,
       'snipe' => player.snipeNumber != null,
-      'chaos' => currentChaosDeltas.isNotEmpty,
-      'lock' => currentLocks.isNotEmpty,
+      'chaos' => currentChaosDeltas.containsKey(currentPlayer),
+      'lock' => currentLockOwners.containsValue(currentPlayer),
       _ => false,
     };
   }
@@ -2852,17 +2852,17 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     final me = myIndex >= 0 ? room!.players[myIndex] : null;
     if (me == null) return false;
     return switch (skillId) {
-      'revolution' => room!.revolutionRound,
+      'revolution' => room!.revolutionRound && room!.revolutionOwnerId == me.id,
       'double' => me.doubleActive,
       'mirror' => me.mirrorActive,
       'tax' => me.taxActive,
       'insurance' => me.insuranceActive,
-      'silence' => room!.defenseRound,
+      'silence' => room!.defenseRound && me.usedSkills.contains('silence'),
       'last_word' => me.lastWordActive,
       'ambush' => me.ambushNumber != null,
       'snipe' => me.snipeNumber != null,
-      'chaos' => room!.chaosDeltas.isNotEmpty,
-      'lock' => room!.lockedCards.isNotEmpty,
+      'chaos' => room!.chaosDeltas.containsKey(me.id),
+      'lock' => room!.lockOwners.containsValue(me.id),
       _ => false,
     };
   }
