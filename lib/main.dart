@@ -14,7 +14,7 @@ const supabaseKey = String.fromEnvironment(
   defaultValue: defaultSupabaseKey,
 );
 const hasSupabaseConfig = supabaseUrl != '' && supabaseKey != '';
-const currentAppVersion = 'v2026.07.05.4';
+const currentAppVersion = 'v2026.07.05.5';
 const maxOnlinePlayers = 5;
 const minOnlinePlayersToStart = 2;
 

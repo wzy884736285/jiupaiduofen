@@ -91452,7 +91452,7 @@ gasl(){var s=this.f
 s=s==null?null:B.b.dZ(s.Q,new A.atx())
 return s===!0},
 avl(a){var s=a.c
-if(s==="v2026.07.05.4")return"\u7248\u672c "+s
+if(s==="v2026.07.05.5")return"\u7248\u672c "+s
 return"\u7248\u672c "+s+"\uff0c\u548c\u4f60\u5f53\u524d\u7248\u672c\u4e0d\u540c"},
 anw(){var s,r,q,p,o,n,m,l,k=this,j=null,i=t.p,h=A.b([new A.Co("\u623f\u95f4\u7801\uff1a"+k.a.c,B.VB,j),B.aq,A.aL("\u8fde\u63a5\u72b6\u6001\uff1a"+k.r,j,j,j,j,j,j)],i)
 if(k.gasl())B.b.M(h,A.b([B.aq,B.J1],i))
@@ -91467,7 +91467,7 @@ p===$&&A.a()
 o=A.tZ(q.a===p?B.I5:B.l_,j,j,j)
 n=A.aL(q.b,j,j,j,j,j,j)
 m=k.avl(q)
-p=q.c==="v2026.07.05.4"
+p=q.c==="v2026.07.05.5"
 l=p?B.Fs:B.jY
 p=p?B.q:B.ba
 h.push(A.pH(!1,j,j,j,!0,j,j,j,!0,j,o,j,j,j,j,j,!1,j,j,j,j,j,A.aL(m,j,j,j,new A.o(!0,l,j,j,j,j,j,p,j,j,j,j,j,j,j,j,j,j,j,j,j,j,j,j,j,j),j,j),j,n,j,j))}h.push(B.bp)
@@ -91589,11 +91589,11 @@ s=s.f
 q===$&&A.a()
 if(s)o=A.a_l(B.bk)
 else o=A.b([],t.s)
-m.f=A.aHL(0,n,0,n,!1,n,n,n,n,B.lv,r,A.b([A.aCi(0,n,n,!1,"v2026.07.05.4",!1,q,!1,0,0,!1,!1,0,0,0,!1,p,0,o,0,n,n,!1,n,n)],t.fS),n,!1,1,n,n,s,n,0)
+m.f=A.aHL(0,n,0,n,!1,n,n,n,n,B.lv,r,A.b([A.aCi(0,n,n,!1,"v2026.07.05.5",!1,q,!1,0,0,!1,!1,0,0,0,!1,p,0,o,0,n,n,!1,n,n)],t.fS),n,!1,1,n,n,s,n,0)
 m.jW()}else{q===$&&A.a()
 s=t.N
 r=t.z
-m.hE("join",A.a1(["id",q,"name",p,"appVersion","v2026.07.05.4"],s,r))
+m.hE("join",A.a1(["id",q,"name",p,"appVersion","v2026.07.05.5"],s,r))
 m.hE("state_request",A.a1(["id",q],s,r))}}},
 $S:576}
 A.aty.prototype={
@@ -91885,7 +91885,7 @@ r.f.cx=0
 r.w=null},
 $S:0}
 A.atx.prototype={
-$1(a){return a.c!=="v2026.07.05.4"},
+$1(a){return a.c!=="v2026.07.05.5"},
 $S:12}
 A.asZ.prototype={
 $0(){return this.a.me(this.b)},
@@ -99753,7 +99753,7 @@ B.bq=new A.o(!0,null,null,null,null,null,18,null,null,null,null,null,null,null,n
 B.Yl=new A.bh("\u786e\u8ba4\u51fa\u724c",null,B.bq,null,null,null,null,null,null)
 B.Ov=new A.bp(B.cB,B.Yl,null)
 B.Ur=new A.o(!0,B.k,null,null,null,null,11,B.kZ,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.Y5=new A.bh("\u7248\u672c v2026.07.05.4",null,B.Ur,null,null,null,null,null,null)
+B.Y5=new A.bh("\u7248\u672c v2026.07.05.5",null,B.Ur,null,null,null,null,null,null)
 B.Ow=new A.bp(B.oM,B.Y5,null)
 B.Ye=new A.bh("\u52a0\u5165\u623f\u95f4",null,B.bq,null,null,null,null,null,null)
 B.Ox=new A.bp(B.cB,B.Ye,null)
