@@ -14,7 +14,9 @@ const supabaseKey = String.fromEnvironment(
   defaultValue: defaultSupabaseKey,
 );
 const hasSupabaseConfig = supabaseUrl != '' && supabaseKey != '';
-const currentAppVersion = 'v2026.07.05.1';
+const currentAppVersion = 'v2026.07.05.2';
+const maxOnlinePlayers = 5;
+const minOnlinePlayersToStart = 2;
 
 const skillDeck = [
   'revolution',
@@ -1400,8 +1402,9 @@ class _GamePageState extends State<GamePage> {
   Widget buildChoosing() {
     final player = players[currentPlayer];
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 80),
+      physics: const AlwaysScrollableScrollPhysics(),
       children: [
         Text(
           '第 $round / 9 轮',
@@ -1482,16 +1485,10 @@ class _GamePageState extends State<GamePage> {
           }),
         ),
         const SizedBox(height: 16),
-        Expanded(
-          child: ListView(
-            children: [
-              buildCardMemoryBoard(localCardMemoryLines()),
-              const SizedBox(height: 12),
-              buildScoreBoard(
-                players.map((p) => ScoreLine(p.name, p.score)).toList(),
-              ),
-            ],
-          ),
+        buildCardMemoryBoard(localCardMemoryLines()),
+        const SizedBox(height: 12),
+        buildScoreBoard(
+          players.map((p) => ScoreLine(p.name, p.score)).toList(),
         ),
         const SizedBox(height: 12),
         SizedBox(
@@ -2295,7 +2292,6 @@ class OnlineLobbyPage extends StatefulWidget {
 class _OnlineLobbyPageState extends State<OnlineLobbyPage> {
   final nameController = TextEditingController(text: '玩家');
   final roomController = TextEditingController();
-  int playerCount = 3;
 
   void createRoom() {
     final roomCode = makeRoomCode();
@@ -2304,7 +2300,7 @@ class _OnlineLobbyPageState extends State<OnlineLobbyPage> {
         builder: (_) => OnlineGamePage(
           roomCode: roomCode,
           playerName: cleanName(),
-          playerCount: playerCount,
+          playerCount: maxOnlinePlayers,
           isHost: true,
         ),
       ),
@@ -2320,7 +2316,7 @@ class _OnlineLobbyPageState extends State<OnlineLobbyPage> {
         builder: (_) => OnlineGamePage(
           roomCode: roomCode,
           playerName: cleanName(),
-          playerCount: playerCount,
+          playerCount: maxOnlinePlayers,
           isHost: false,
         ),
       ),
@@ -2366,21 +2362,11 @@ class _OnlineLobbyPageState extends State<OnlineLobbyPage> {
                 ),
               ),
               const SizedBox(height: 18),
-              const Text(
-                '创建房间人数',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              SegmentedButton<int>(
-                segments: const [
-                  ButtonSegment(value: 2, label: Text('2人')),
-                  ButtonSegment(value: 3, label: Text('3人')),
-                  ButtonSegment(value: 4, label: Text('4人')),
-                  ButtonSegment(value: 5, label: Text('5人')),
-                ],
-                selected: {playerCount},
-                onSelectionChanged: (value) =>
-                    setState(() => playerCount = value.first),
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.groups),
+                title: Text('房间最多 5 人'),
+                subtitle: Text('不用等满员，2 人以上房主就可以直接开始。'),
               ),
               const SizedBox(height: 18),
               FilledButton.icon(
@@ -2810,7 +2796,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
 
   void startOnlineGame() {
     if (!isHost || room == null) return;
-    if (room!.players.length != room!.playerCount) return;
+    if (room!.players.length < minOnlinePlayersToStart) return;
 
     setState(() {
       final random = Random();
@@ -3666,7 +3652,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         ],
         const SizedBox(height: 18),
         Text(
-          '玩家 ${room!.players.length} / ${room!.playerCount}',
+          '玩家 ${room!.players.length} / 最多 ${room!.playerCount}',
           style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
@@ -3691,7 +3677,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         const SizedBox(height: 18),
         if (isHost)
           FilledButton(
-            onPressed: room!.players.length == room!.playerCount
+            onPressed: room!.players.length >= minOnlinePlayersToStart
                 ? startOnlineGame
                 : null,
             child: const Padding(
@@ -3711,8 +3697,9 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     final activePlayer = getOnlineActivePlayer();
     final me = myIndex >= 0 ? room!.players[myIndex] : null;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 80),
+      physics: const AlwaysScrollableScrollPhysics(),
       children: [
         Text(
           '第 ${room!.round} / 9 轮',
@@ -3794,18 +3781,10 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
             }),
           ),
         const SizedBox(height: 16),
-        Expanded(
-          child: ListView(
-            children: [
-              buildCardMemoryBoard(
-                onlineCardMemoryLines(includeCurrentRound: false),
-              ),
-              const SizedBox(height: 12),
-              buildScoreBoard(
-                room!.players.map((p) => ScoreLine(p.name, p.score)).toList(),
-              ),
-            ],
-          ),
+        buildCardMemoryBoard(onlineCardMemoryLines(includeCurrentRound: false)),
+        const SizedBox(height: 12),
+        buildScoreBoard(
+          room!.players.map((p) => ScoreLine(p.name, p.score)).toList(),
         ),
         const SizedBox(height: 12),
         SizedBox(
