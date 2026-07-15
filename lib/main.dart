@@ -14,7 +14,7 @@ const supabaseKey = String.fromEnvironment(
   defaultValue: defaultSupabaseKey,
 );
 const hasSupabaseConfig = supabaseUrl != '' && supabaseKey != '';
-const currentAppVersion = 'v2026.07.05.5';
+const currentAppVersion = 'v2026.07.15.1';
 const maxOnlinePlayers = 5;
 const minOnlinePlayersToStart = 2;
 
@@ -2555,6 +2555,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
   late final RealtimeChannel channel;
   OnlineRoomState? room;
   String connectionStatus = '连接中';
+  String? connectionErrorDetail;
   int? selectedCard;
 
   bool get isHost => widget.isHost;
@@ -2601,6 +2602,28 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
     return items.join('；');
   }
 
+  String get connectionStatusText {
+    return switch (connectionStatus) {
+      'subscribed' => '已连接',
+      'channelError' => '联机通道连接失败',
+      'timedOut' => '联机通道连接超时',
+      'closed' => '联机通道已断开',
+      _ => connectionStatus,
+    };
+  }
+
+  String get connectionHelpText {
+    if (connectionStatus == 'channelError' ||
+        connectionStatus == 'timedOut' ||
+        connectionStatus == 'closed') {
+      final detail = connectionErrorDetail == null
+          ? ''
+          : '\n\n错误详情：$connectionErrorDetail';
+      return '通常是 Supabase 实时联机服务连不上。请先打开 VPN 或切换网络后重新进入房间；如果仍然失败，请检查 Supabase 项目是否暂停，以及项目 URL 和 publishable key 是否正确。$detail';
+    }
+    return '正在连接线上房间...';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2622,6 +2645,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         .subscribe((status, error) {
           setState(() {
             connectionStatus = status.name;
+            connectionErrorDetail = error?.toString();
           });
 
           if (status == RealtimeSubscribeStatus.subscribed) {
@@ -3740,13 +3764,63 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
         child: Padding(
           padding: const EdgeInsets.all(18),
           child: room == null
-              ? Center(child: Text(connectionStatus))
+              ? buildOnlineConnectionStatus()
               : switch (room!.phase) {
                   OnlinePhase.lobby => buildOnlineLobby(),
                   OnlinePhase.choosing => buildOnlineChoosing(),
                   OnlinePhase.reveal => buildOnlineReveal(false),
                   OnlinePhase.finished => buildOnlineReveal(true),
                 },
+        ),
+      ),
+    );
+  }
+
+  Widget buildOnlineConnectionStatus() {
+    final isError =
+        connectionStatus == 'channelError' ||
+        connectionStatus == 'timedOut' ||
+        connectionStatus == 'closed';
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isError ? Icons.wifi_off : Icons.sync,
+              size: 42,
+              color: isError
+                  ? const Color(0xFFC26400)
+                  : const Color(0xFF2E7D6F),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              connectionStatusText,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              connectionHelpText,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 15, color: Color(0xFF55524A)),
+            ),
+            if (isError) ...[
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const OnlineLobbyPage(onlineEnabled: hasSupabaseConfig),
+                  ),
+                ),
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('返回后重新进入'),
+              ),
+            ],
+          ],
         ),
       ),
     );
@@ -3771,7 +3845,7 @@ class _OnlineGamePageState extends State<OnlineGamePage> {
           style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        Text('连接状态：$connectionStatus'),
+        Text('连接状态：$connectionStatusText'),
         if (hasVersionMismatch) ...[
           const SizedBox(height: 8),
           const ListTile(
